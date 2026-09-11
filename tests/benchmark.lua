@@ -8,7 +8,7 @@ local ok, result = pcall(
   vim.api.nvim_buf_set_lines(0,0,-1,false,lines)
   vim.cmd('vsplit'); vim.cmd('split'); vim.cmd('wincmd l'); vim.cmd('split')
   local sd, rt = require('stardust'), require('stardust.runtime')
-  sd.setup({meteor={enabled=false},below_eof=false})
+  sd.setup({meteors=false,objects={}}); sd.stop()
   local function measure(active)
     local samples = {}
     for _=1,240 do

@@ -1,110 +1,61 @@
-*stardust.txt*  A quiet night sky for Neovim
+*stardust.txt*  Stars around your text
 
 Stardust requires Neovim 0.10 or newer.                     *stardust*
 
-SETUP                                                    *stardust-setup*
+SETUP                                                     *stardust-setup*
 >lua
-  vim.opt.runtimepath:prepend('/home/paul/Repos/Stardust')
-  require('stardust').setup({ autostart = true })
+  vim.opt.runtimepath:prepend(vim.fn.expand('~/Repos/Stardust'))
+  require('stardust').setup({ fps = 60, stars = 32 })
 <
-For the complete option list and compatibility notes, see README.md.
-All highlight groups set foreground colors only, preserving transparency.
+setup() starts the animation. Calling it again applies new options.
+Enable termguicolors for the foreground brightness ramps.
 
-APPEARANCE                                               *stardust-appearance*
->lua
-  require('stardust').setup({
-    autostart = true,
-    fps = 30,
-    enabled = {
-      stars = true, meteors = true, ships = true,
-      moons = true, planets = true, comets = true,
-    },
-    colors = {
-      stars = { '#f4f1de', '#ffe6a3' },
-      meteors = '#e9c889', ships = '#c5d6ed', moons = '#f4f1de',
-      planets = '#ffe6a3', comets = '#e9c889',
-    },
-    terminals = true,
-    meteor = { enabled = true, speed = 24 },
-    objects = {
-      enabled = true,
-      interval = { 15, 35 },
-      speed = 3, -- cells/second; comets move twice as fast
-      types = { 'moon', 'planet', 'comet', 'ship' },
-      ships = {
-        { right = '╞═◉═╡', left = '╞═◉═╡' },
-        {
-          right = { '  ▄  ', '╰─○─╯' },
-          left = { '  ▄  ', '╰─○─╯' },
-          color = '#a9cfff', -- optional per-ship override
-        },
-      },
-    },
-  })
-<
-enabled contains category switches; false disables spawning and previews.
-Omitted switches keep their defaults. Turning all six off also stops the timer.
-stars sets the count, separately from the enabled.stars switch.
+OPTIONS                                                   *stardust-options*
 
-colors.stars is a list of 1-8 #RRGGBB values. Each other colors key accepts one
-#RRGGBB value. Ship definitions may override colors.ships with their own color.
-The old palette option and named presets have been replaced by colors.
+  fps       Target updates per second, 1-120. Default: 60.
+  stars     Maximum stars per scene, 0-100. Default: 32.
+  enabled   Booleans for stars, meteors, moons, planets, comets, ships.
+            All default to true. False also disables previews.
+  meteors   Enable shooting stars. Default: true.
+  objects   List of moon, planet, comet, ship. Default: all four.
+            Use {} for no additional objects.
+  colors    Foreground overrides: stars (list of 1-8 #RRGGBB colors),
+            meteors, ships, moons, planets, comets (one color each).
+  ships     List of 1-16 ships with right and left artwork: a string or
+            1-4 rows, at most 16 single-cell characters wide. Spaces are
+            transparent. Each ship can also have its own color.
 
-Set objects.enabled=false or meteor.enabled=false for automatic spawning off
-and manual previews on. Previews still respect the category switches. There
-is at most one object per region in addition to its meteor. objects.types
-selects which enabled kinds may appear automatically.
-Moons and planets remain stationary for 16-28 seconds and fade in and out.
-Ships fly horizontally. objects.ships is a list of 1-16 artwork definitions,
-replacing the old ship names. Each needs right and left artwork: a string or
-1-4 rows, up to 16 single-cell glyphs per row. Spaces are transparent. Artwork
-is drawn as supplied, without automatic mirroring or exhaust. A ship chooses
-one definition uniformly for its entire flight. Other artwork stays built-in.
+All options are optional. See README.md for color and ship examples.
+Placement, cursor, filetype, and pause switches have been removed. There is
+no autostart option; setup() starts the sky. fps is a single number.
 
-COMMANDS                                                 *:Stardust*
+COMMANDS                                                  *:Stardust*
 
-  :Stardust              Toggle the animation.
-  :Stardust start        Start the animation.
-  :Stardust stop         Stop and clear all decorations.
-  :Stardust meteor       Attempt a meteor in the current view.
-  :Stardust moon         Preview a stationary crescent moon.
+  :Stardust              Toggle the sky.
+  :Stardust start        Start the sky.
+  :Stardust stop         Stop and remove all decorations.
+  :Stardust meteor       Preview a shooting star.
+  :Stardust moon         Preview a crescent moon.
   :Stardust planet       Preview a ringed planet.
-  :Stardust comet        Preview a slow comet.
-  :Stardust ship         Preview a randomly selected custom ship.
-  :Stardust status       Show activity and skipped-window reasons.
+  :Stardust comet        Preview a comet.
+  :Stardust ship         Preview a custom ship.
+  :Stardust status       Show activity and counts.
   :checkhealth stardust  Check rendering requirements.
 
-LUA                                                      *stardust-api*
+The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(),
+object(kind), and status(). Previews respect meteors and objects, returning
+whether the object could start. object() without a kind picks from objects.
 
-  require('stardust').setup(opts)
-  require('stardust').start()
-  require('stardust').stop()
-  require('stardust').toggle()
-  require('stardust').meteor()  -- boolean: whether a clear path was found
-  require('stardust').object(kind) -- moon, planet, comet, ship; nil for random
-  require('stardust').status()  -- table: activity, counts, skipped views
+PLACEMENT                                                 *stardust-placement*
 
-SAFETY                                                   *stardust-placement*
+The sky runs in every mode and buffer type, including startup dashboards.
+Cursor movement does not clear it. Text and virtual text hide particles in
+occupied cells without deleting them. Positions follow the visible viewport,
+including wrapped lines, Unicode, tabs, and folds.
 
-Text is checked on every redraw. Indentation and blank buffer lines are
-reserved by default; blank_lines=true enables stars on blank buffer lines.
-Wrap in file buffers, diff, conceal, visible folds, and external virtual lines
-disable the effect for the affected view. Floating windows are skipped.
-
-Terminal buffers use blank rows and space after output, reserving the cursor
-row. No virtual lines are added to terminals. Set terminals=false to opt out.
-Terminal input mode keeps all eligible windows animated. Visual/select,
-command-line, and replace modes pause the effect, as does focus loss by default.
-
-The below-EOF canvas is shared by all views of a buffer and sized to their
-smallest free area. Set below_eof=false to disable it independently.
-Meteors and comets use one diagonal: two columns across per row down, with
-brightness transitions between positions at 30 FPS by default. They finish
-their trails at a side or the bottom, hiding behind text as needed.
-Mode changes and edits preserve flights while the region remains available.
-
-Set b:stardust_disable or w:stardust_disable to v:true to exclude a buffer
-or window. Temporary decorations from arbitrary third-party redraw providers
-cannot always be inspected; use these exclusions where needed.
+Below-file virtual lines are shared by matching views of a buffer. Views with
+different geometry keep separate skies on buffer lines. Scrolling and edits
+clear stale decorations. Files and terminal scrollback are never changed.
+Highlights preserve the colorscheme background and terminal transparency.
 
 vim:tw=78:ts=8:ft=help:norl:

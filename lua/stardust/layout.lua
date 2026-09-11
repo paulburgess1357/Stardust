@@ -1,167 +1,149 @@
 local api = vim.api
 local M = {}
+local MARGIN = 2
 
--- strdisplaywidth uses the current buffer's tab settings. Expand tabs ourselves
--- so a non-current split with different tabstop/vartabstop has correct geometry.
-function M.width(text, tabstop, vartabstop)
-  local stops = {}
-  for value in (vartabstop or ''):gmatch('%d+') do
-    stops[#stops + 1] = tonumber(value)
+function M.empty(width, height, margin)
+  margin = margin or MARGIN
+  local view = { width = width, height = height, area = 0, rows = {} }
+  for y = 1, height do
+    local first = math.min(margin, width)
+    local last = math.max(first, width - margin)
+    view.rows[y] = { first = first, last = last }
+    view.area = view.area + last - first
   end
-  local column, offset = 0, 1
-  while true do
-    local tab = text:find('\t', offset, true)
-    column = column + vim.fn.strdisplaywidth(text:sub(offset, tab and tab - 1 or #text), column)
-    if not tab then
-      return column
-    end
-    if #stops == 0 then
-      column = column + tabstop - column % tabstop
-    else
-      local boundary = 0
-      for _, size in ipairs(stops) do
-        boundary = boundary + size
-        if boundary > column then
-          break
-        end
-      end
-      if boundary <= column then
-        local size = stops[#stops]
-        boundary = boundary + (math.floor((column - boundary) / size) + 1) * size
-      end
-      column = boundary
-    end
-    offset = tab + 1
-  end
+  return view
 end
 
-function M.get(win, buf, cfg, cache, canvas_ns)
+-- Use rendered positions, so tabs, Unicode, wraps, folds, and dashboard
+-- buffers follow the same rules. Only the empty space after text is drawn on.
+function M.get(win, buf, cache, canvas_ns)
   if not api.nvim_win_is_valid(win) or not api.nvim_buf_is_valid(buf) then
     return nil, 'closed'
   end
-  local terminal = vim.bo[buf].buftype == 'terminal'
-  if
-    api.nvim_win_get_config(win).relative ~= '' or (vim.bo[buf].buftype ~= '' and not terminal)
-  then
-    return nil, 'special window'
-  end
-  if terminal and not cfg.terminals then
-    return nil, 'terminals disabled'
-  end
-  if vim.b[buf].stardust_disable or vim.w[win].stardust_disable then
-    return nil, 'disabled for this view'
-  end
-  if vim.tbl_contains(cfg.excluded_filetypes, vim.bo[buf].filetype) then
-    return nil, 'excluded filetype'
-  end
-  -- Terminal buffers already contain the emulator's screen rows, even with wrap set.
-  if (vim.wo[win].wrap and not terminal) or vim.wo[win].diff or vim.wo[win].conceallevel > 0 then
-    return nil, 'wrap, diff, or conceal enabled'
+  local wi = vim.fn.getwininfo(win)[1]
+  local width, height = wi.width - wi.textoff, wi.height
+  if width <= MARGIN * 2 or height < 1 then
+    return nil, 'no empty space'
   end
   local count = api.nvim_buf_line_count(buf)
-  if count > cfg.max_lines or api.nvim_buf_get_offset(buf, count) > cfg.max_bytes then
-    return nil, 'large buffer'
-  end
-  local wi = vim.fn.getwininfo(win)[1]
-  if not wi then
-    return nil, 'closed'
-  end
   local top, bottom = wi.topline, math.min(count, wi.botline)
-  local height, width = wi.height, wi.width - wi.textoff
-  if width <= cfg.margin * 2 or bottom < top or bottom - top + 1 > height then
-    return nil, 'no simple visible area'
+  local tick = api.nvim_buf_get_changedtick(buf)
+  if cache.tick ~= tick then
+    cache.tick, cache.lines = tick, {}
   end
-  local occupied = api.nvim_win_text_height(win, { start_row = top - 1, end_row = bottom - 1 })
-  if occupied.fill > 0 or occupied.all ~= bottom - top + 1 then
-    return nil, 'folds or virtual lines'
+  local lines, rows, occupied = {}, {}, 0
+  local left, screen_top = wi.wincol + wi.textoff, wi.winrow + wi.winbar
+  for y = 1, height do
+    rows[y] = { first = width, last = width }
   end
-
-  local tick, ts, vts =
-    api.nvim_buf_get_changedtick(buf), vim.bo[buf].tabstop, vim.bo[buf].vartabstop
-  local key = table.concat({ tick, top, bottom, ts, vts, vim.o.ambiwidth, vim.o.display }, ':')
-  if cache.key ~= key then
-    local lines = api.nvim_buf_get_lines(buf, top - 1, bottom, false)
-    local widths, indent = {}, 0
-    for i, line in ipairs(lines) do
-      if #line > 16000 then
-        return nil, 'very long visible line'
+  api.nvim_win_call(win, function()
+    local line = top
+    while line <= bottom do
+      local fold = vim.fn.foldclosedend(line)
+      local start = vim.fn.screenpos(win, line, 1)
+      if fold >= line then
+        occupied = math.max(occupied, start.row - screen_top + 1)
+        line = fold + 1
+      else
+        local text = cache.lines[line]
+          or api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
+          or ''
+        lines[line] = text
+        if #text <= 16384 then
+          -- Padding is empty space, unless listchars makes it visible.
+          local content = vim.wo.list and text or text:gsub('[ \t]+$', '')
+          local pos = vim.fn.screenpos(win, line, #content + 1)
+          local y = pos.row - screen_top + 1
+          if y >= 1 and y <= height then
+            local last = width - MARGIN
+            rows[y] = {
+              first = math.min(last, math.max(MARGIN, pos.col - left + MARGIN)),
+              last = last,
+              line = line - 1,
+              col = #content,
+            }
+            occupied = math.max(occupied, y)
+          elseif vim.wo.wrap then
+            occupied = height
+          end
+        else
+          occupied = math.max(occupied, vim.wo.wrap and height or start.row - screen_top + 1)
+        end
+        line = line + 1
       end
-      local leading = line:match('^[ \t]*')
-      indent = math.max(indent, M.width(leading, ts, vts))
-      local text = terminal and line:gsub('%s+$', '') or line
-      widths[i] = text:find('%S') and M.width(text, ts, vts) or false
     end
-    cache.key, cache.widths, cache.indent = key, widths, indent
-  end
+  end)
+  cache.lines = lines
+  occupied = math.min(height, math.max(1, occupied))
+  local view = {
+    win = win,
+    buf = buf,
+    width = width,
+    height = occupied,
+    top = top,
+    rows = rows,
+    area = 0,
+    free = bottom == count and height - occupied or 0,
+  }
 
-  -- Scan each redraw, independently of changedtick: extmarks can change without
-  -- text changing. Bound the scan and skip ambiguous views instead of guessing.
-  local marks = api.nvim_buf_get_extmarks(
-    buf,
-    -1,
-    { top - 1, 0 },
-    { bottom, 0 },
-    { details = true, overlap = true, limit = 512 }
-  )
-  if #marks == 512 then
-    return nil, 'too many decorations'
-  end
-  local blocked = {}
-  for _, mark in ipairs(marks) do
-    local detail = mark[4]
-    if detail.ns_id ~= canvas_ns then
-      if detail.virt_lines then
-        return nil, 'other virtual lines'
-      end
-      if detail.virt_text or detail.conceal or detail.conceal_lines then
-        for row = math.max(top - 1, mark[2]), math.min(bottom - 1, detail.end_row or mark[2]) do
-          blocked[row] = true
+  -- Stored virtual text takes precedence. Plain syntax highlights do not
+  -- consume space or count toward this bounded scan.
+  local blocked, budget = {}, 512
+  for _, kind in ipairs({ 'virt_text', 'virt_lines' }) do
+    local marks = api.nvim_buf_get_extmarks(buf, -1, { top - 1, 0 }, { bottom, 0 }, {
+      details = true,
+      overlap = true,
+      limit = budget,
+      type = kind,
+    })
+    budget = budget - #marks
+    for _, mark in ipairs(marks) do
+      local detail = mark[4]
+      if detail.ns_id ~= canvas_ns then
+        if detail.virt_text then
+          for row = math.max(top - 1, mark[2]), math.min(bottom - 1, detail.end_row or mark[2]) do
+            blocked[row] = true
+          end
+        end
+        if detail.virt_lines and mark[2] == count - 1 then
+          view.free = 0
         end
       end
     end
-  end
-  local cursor = (cfg.cursor_row or terminal) and api.nvim_win_get_cursor(win)[1] or -1
-  local result = {
-    rows = {},
-    width = width,
-    height = bottom - top + 1,
-    area = 0,
-    win = win,
-    buf = buf,
-    top = top,
-    screen_height = height,
-    eof = bottom == count,
-    count = count,
-    -- Never insert virtual lines into a terminal's screen or scrollback.
-    free = not terminal and bottom == count and math.max(0, height - occupied.all) or 0,
-  }
-  for i, line_width in ipairs(cache.widths) do
-    local line = top + i - 2
-    local content = line_width or cache.indent
-    local first = math.max(cfg.margin, content - wi.leftcol + cfg.margin)
-    local last = width - cfg.margin
-    if
-      blocked[line]
-      or line + 1 == cursor
-      or (line_width == false and not cfg.blank_lines and not terminal)
-    then
-      first = last
+    if budget == 0 then
+      break
     end
-    first = math.min(first, last)
-    result.rows[i] = { first = first, last = last, line = line }
-    result.area = result.area + last - first
   end
-  return result
+  for y = 1, occupied do
+    local row = rows[y]
+    if budget == 0 or blocked[row.line] then
+      row.first = row.last
+    end
+    view.area = view.area + row.last - row.first
+  end
+  for y = height, occupied + 1, -1 do
+    rows[y] = nil
+  end
+  return view
 end
 
-function M.empty(width, height, margin)
-  local layout = { width = width, height = height, area = 0, rows = {} }
-  for i = 1, height do
-    local first, last = math.min(margin, width), math.max(math.min(margin, width), width - margin)
-    layout.rows[i] = { first = first, last = last }
-    layout.area = layout.area + last - first
+-- Buffer-scoped EOF lines are shared by views with the same geometry.
+function M.scene(views, free, width)
+  local first = views[1]
+  local result = M.empty(width, first.height + free)
+  result.area = 0
+  for y, row in ipairs(result.rows) do
+    if y <= first.height then
+      for _, view in ipairs(views) do
+        row.first = math.max(row.first, view.rows[y].first)
+        row.last = math.min(row.last, view.rows[y].last)
+      end
+      row.first = math.min(row.first, row.last)
+      row.line, row.col = first.rows[y].line, first.rows[y].col
+    end
+    result.area = result.area + row.last - row.first
   end
-  return layout
+  return result
 end
 
 return M

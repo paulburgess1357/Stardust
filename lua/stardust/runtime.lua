@@ -6,8 +6,7 @@ local M = {}
 
 local stars_ns = api.nvim_create_namespace('stardust.stars')
 local canvas_ns = api.nvim_create_namespace('stardust.canvas')
-local state =
-  { active = false, focused = true, contexts = {}, canvases = {}, attached = {}, generation = 0 }
+local state = { active = false, contexts = {}, canvases = {}, attached = {}, request = 0 }
 
 local function now()
   return uv.hrtime() / 1e9
@@ -25,7 +24,7 @@ local function clear_canvas(buf, forget)
   if forget then
     state.canvases[buf] = nil
   elseif state.canvases[buf] then
-    -- Clearing decorations after an edit or mode change must not kill a flight.
+    -- Clearing decorations after an edit must not kill a flight.
     state.canvases[buf].id = nil
   end
 end
@@ -36,22 +35,8 @@ local function clear_canvases()
   end
 end
 
-local function paused()
-  if not state.focused and state.cfg.pause_on_focus_lost then
-    return true
-  end
-  -- Popups render above extmarks. Avoid decorating the text in select,
-  -- visual and command-line modes; terminal input keeps every window animated.
-  return api.nvim_get_mode().mode:match('^[vVsS\22\19cR]') ~= nil
-end
-
 local function any_enabled()
-  for _, enabled in pairs(state.cfg.enabled) do
-    if enabled then
-      return true
-    end
-  end
-  return false
+  return state.cfg.stars > 0 or state.cfg.meteors or #state.cfg.objects > 0
 end
 
 local function attach(buf)
@@ -99,7 +84,7 @@ local function fail(err)
 end
 
 local function render_window(_, win, buf)
-  if not state.active or paused() then
+  if not state.active then
     return false
   end
   local ok, err = pcall(function()
@@ -108,18 +93,33 @@ local function render_window(_, win, buf)
       return
     end
     -- Re-evaluate occupancy during every redraw, including edits between ticks.
-    local view = layout.get(win, buf, state.cfg, ctx.cache, canvas_ns)
+    local view = layout.get(win, buf, ctx.cache, canvas_ns)
+    local canvas = state.canvases[buf]
+    local previous = canvas and canvas.views[win]
+    if
+      canvas
+      and (
+        not view
+        or not previous
+        or view.top ~= previous.top
+        or view.free ~= previous.free
+        or view.width ~= previous.width
+      )
+    then
+      -- WinScrolled is delivered after the command returns. Clear an obsolete
+      -- EOF block during this redraw too, before that deferred event/timer.
+      clear_canvas(buf)
+    end
     if not view then
       return
     end
-    for _, cell in ipairs(sky.frame(ctx.sky, view, state.cfg, state.palette)) do
+    for _, cell in ipairs(sky.frame(ctx.scene or ctx.sky, view, state.cfg, state.palette)) do
       if vim.fn.strdisplaywidth(cell.glyph) == 1 then
-        api.nvim_buf_set_extmark(buf, stars_ns, view.rows[cell.y].line, 0, {
+        api.nvim_buf_set_extmark(buf, stars_ns, view.rows[cell.y].line, view.rows[cell.y].col, {
           ephemeral = true,
           virt_text = { { cell.glyph, cell.hl } },
           virt_text_win_col = cell.x,
           virt_text_pos = 'overlay',
-          virt_text_hide = true,
           hl_mode = 'combine',
           priority = 1,
         })
@@ -132,15 +132,15 @@ local function render_window(_, win, buf)
   return false
 end
 
-local function paint_canvas(buf, canvas, view, dt)
-  sky.step(canvas.sky, view, state.cfg, dt, #state.palette.stars)
+local function paint_canvas(buf, canvas, view, offset)
   local rows = {}
-  for i = 1, view.height do
+  for i = 1, view.height - offset do
     rows[i] = {}
   end
   for _, cell in ipairs(sky.frame(canvas.sky, view, state.cfg, state.palette)) do
-    if vim.fn.strdisplaywidth(cell.glyph) == 1 then
-      rows[cell.y][#rows[cell.y] + 1] = cell
+    if cell.y > offset and vim.fn.strdisplaywidth(cell.glyph) == 1 then
+      local row = rows[cell.y - offset]
+      row[#row + 1] = cell
     end
   end
   local lines = {}
@@ -171,7 +171,7 @@ function M.step(dt)
   if not state.active then
     return
   end
-  if paused() or not any_enabled() then
+  if not any_enabled() then
     clear_canvases()
     return
   end
@@ -185,21 +185,26 @@ function M.step(dt)
   -- other tabs: only create a canvas when all views can safely accommodate it.
   for _, win in ipairs(api.nvim_list_wins()) do
     local buf = api.nvim_win_get_buf(win)
-    local group = groups[buf] or { width = math.huge, height = math.huge, visible = false }
+    local group = groups[buf]
+      or { width = math.huge, height = math.huge, visible = false, views = {}, contexts = {} }
     groups[buf] = group
     local ctx = context(win, buf)
     ctx.visible = visible[win] or false
-    local view, reason = layout.get(win, buf, state.cfg, ctx.cache, canvas_ns)
+    local view, reason = layout.get(win, buf, ctx.cache, canvas_ns)
     ctx.reason, ctx.layout = reason, view
     seen[win] = true
     if view then
       attach(buf)
+      group.views[#group.views + 1] = view
+      group.contexts[#group.contexts + 1] = ctx
       group.width = math.min(group.width, view.width)
       group.height = math.min(group.height, view.free)
       group.visible = group.visible or visible[win]
-      if visible[win] then
-        sky.step(ctx.sky, view, state.cfg, dt, #state.palette.stars)
+      -- A stored EOF canvas cannot have different screen origins in two views.
+      if group.top and (group.top ~= view.top or group.rows ~= view.height) then
+        group.height = 0
       end
+      group.top, group.rows = view.top, view.height
     else
       group.height = 0
     end
@@ -210,63 +215,66 @@ function M.step(dt)
     end
   end
   for buf in pairs(state.canvases) do
-    if
-      not groups[buf]
-      or not groups[buf].visible
-      or groups[buf].height <= 0
-      or not state.cfg.below_eof
-    then
+    if not groups[buf] or not groups[buf].visible or groups[buf].height <= 0 then
       clear_canvas(buf, true)
     end
   end
-  if state.cfg.below_eof then
-    for buf, group in pairs(groups) do
-      if group.visible and group.height > 0 then
-        local canvas = state.canvases[buf]
-        if not canvas then
-          canvas = { sky = sky.new(uv.hrtime() % 2147483646 + buf * 97) }
-          state.canvases[buf] = canvas
+  for buf, group in pairs(groups) do
+    if group.visible and group.height > 0 then
+      local canvas = state.canvases[buf]
+      if not canvas then
+        local ctx = group.contexts[1]
+        canvas = { sky = ctx.scene or ctx.sky }
+        state.canvases[buf] = canvas
+      end
+      local view = layout.scene(group.views, group.height, group.width)
+      canvas.views = {}
+      for _, visible_view in ipairs(group.views) do
+        canvas.views[visible_view.win] = visible_view
+      end
+      for _, ctx in ipairs(group.contexts) do
+        ctx.scene = canvas.sky
+      end
+      sky.step(canvas.sky, view, state.cfg, dt, #state.palette.stars)
+      paint_canvas(buf, canvas, view, group.views[1].height)
+    else
+      for _, ctx in ipairs(group.contexts) do
+        if ctx.scene then
+          -- Splits can stop sharing their canvas after scrolling or resizing.
+          -- Preserve each flight, but give the resulting views independent time.
+          ctx.sky, ctx.scene = vim.deepcopy(ctx.scene), nil
         end
-        paint_canvas(buf, canvas, layout.empty(group.width, group.height, state.cfg.margin), dt)
+        if ctx.visible then
+          sky.step(ctx.sky, ctx.layout, state.cfg, dt, #state.palette.stars)
+        end
       end
     end
   end
 end
 
-local function pulse(generation)
-  if not state.active or generation ~= state.generation then
-    return
-  end
-  local time = now()
-  local dt = math.min(0.25, time - state.last)
-  state.last = time
-  local ok, err = pcall(M.step, dt)
-  if not ok then
-    fail(err)
-    return
-  end
-  if not paused() then
-    redraw()
-  end
-end
-
-local function timer_start()
-  if not state.timer or not state.active or not any_enabled() then
-    return
-  end
-  state.last = now()
-  local generation = state.generation
-  state.timer:start(0, math.floor(1000 / state.cfg.fps), function()
-    -- At most one pending callback: a busy editor must not accumulate frames.
-    if state.pending == generation then
-      return
-    end
-    state.pending = generation
+local queue_frame
+queue_frame = function(delay)
+  state.request = state.request + 1
+  local request = state.request
+  state.timer:start(delay, 0, function()
     vim.schedule(function()
-      if state.pending == generation then
-        state.pending = nil
+      if not state.active or request ~= state.request then
+        return
       end
-      pulse(generation)
+      local started = now()
+      local dt = math.max(0, started - state.last)
+      state.last = started
+      local ok, err = pcall(M.step, dt)
+      if not ok then
+        fail(err)
+        return
+      end
+      redraw()
+      -- One pending frame, including after scrolls and restarts. Rendering
+      -- time counts toward the budget; a busy editor never builds a backlog.
+      if state.active and request == state.request then
+        queue_frame(math.max(1, math.ceil(1000 / state.cfg.fps - (now() - started) * 1000)))
+      end
     end)
   end)
 end
@@ -276,51 +284,43 @@ function M.start(cfg)
     return
   end
   state.cfg, state.palette = cfg, palette.setup(cfg)
-  state.active, state.focused, state.contexts = true, true, {}
-  state.generation = state.generation + 1
-  state.pending = nil
+  state.active, state.contexts = true, {}
+  state.request = state.request + 1
   api.nvim_set_decoration_provider(stars_ns, { on_win = render_window })
   local group = api.nvim_create_augroup('StardustRuntime', { clear = true })
-  api.nvim_create_autocmd('ColorScheme', {
-    group = group,
-    callback = function()
-      state.palette = palette.setup(state.cfg)
-      clear_canvases()
-    end,
-  })
-  api.nvim_create_autocmd('FocusLost', {
-    group = group,
-    callback = function()
-      state.focused = false
-      if cfg.pause_on_focus_lost then
-        state.timer:stop()
-        clear_canvases()
-        redraw()
-      end
-    end,
-  })
-  api.nvim_create_autocmd('FocusGained', {
-    group = group,
-    callback = function()
-      state.focused = true
-      timer_start()
-    end,
-  })
+  local function refresh_palette()
+    state.palette = palette.setup(state.cfg)
+    if any_enabled() then
+      queue_frame(0)
+    end
+  end
+  api.nvim_create_autocmd('ColorScheme', { group = group, callback = refresh_palette })
   api.nvim_create_autocmd(
-    { 'ModeChanged', 'WinResized', 'WinNew', 'WinClosed', 'BufWinEnter', 'BufWinLeave', 'TabEnter' },
+    'OptionSet',
+    { group = group, pattern = 'background', callback = refresh_palette }
+  )
+  api.nvim_create_autocmd(
+    { 'WinScrolled', 'WinResized', 'WinNew', 'WinClosed', 'BufWinEnter', 'BufWinLeave', 'TabEnter' },
     {
       group = group,
-      callback = clear_canvases,
+      callback = function()
+        if state.active and any_enabled() then
+          queue_frame(0)
+        end
+      end,
     }
   )
   api.nvim_create_autocmd('VimLeavePre', { group = group, callback = M.stop })
   state.timer = assert(uv.new_timer(), 'stardust: could not create animation timer')
-  timer_start()
+  state.last = now()
+  if any_enabled() then
+    queue_frame(0)
+  end
 end
 
 function M.stop()
   state.active = false
-  state.generation = state.generation + 1
+  state.request = state.request + 1
   if state.timer then
     state.timer:stop()
     state.timer:close()
@@ -338,26 +338,36 @@ local function spawn(kind)
   if not state.active then
     return false
   end
-  M.step(0)
+  local time = now()
+  M.step(math.max(0, time - state.last))
+  state.last = time
   local buf, win = api.nvim_get_current_buf(), api.nvim_get_current_win()
   local canvas, ctx = state.canvases[buf], state.contexts[win]
   local function attempt(scene, view)
     if not view then
       return false
     end
-    if kind == 'meteor' then
-      return sky.meteor(scene, view, state.cfg)
+    if kind == 'meteor' or kind == 'shower' or kind == 'battle' then
+      return sky[kind](scene, view, state.cfg)
     end
     return sky.object(scene, view, state.cfg, kind)
   end
-  if canvas and attempt(canvas.sky, canvas.layout) then
-    return true
+  local spawned
+  if canvas then
+    spawned = attempt(canvas.sky, canvas.layout)
+  else
+    spawned = ctx and attempt(ctx.sky, ctx.layout) or false
   end
-  return ctx and attempt(ctx.sky, ctx.layout) or false
+  if spawned then
+    queue_frame(0)
+  end
+  return spawned
 end
 
-function M.meteor()
-  return spawn('meteor')
+for _, kind in ipairs({ 'meteor', 'shower', 'battle' }) do
+  M[kind] = function()
+    return spawn(kind)
+  end
 end
 
 function M.object(kind)
@@ -367,13 +377,16 @@ end
 function M.status()
   local result = {
     active = state.active,
-    paused = state.active and paused() or false,
     windows = 0,
     stars = 0,
     objects = 0,
+    showers = 0,
+    battles = 0,
     canvases = 0,
     skipped = {},
+    fps = state.active and state.cfg.fps or 0,
   }
+  local counted = {}
   for win, ctx in pairs(state.contexts) do
     if ctx.visible then
       if ctx.layout then
@@ -382,13 +395,17 @@ function M.status()
         result.skipped[win] = ctx.reason
       end
     end
-    result.stars = result.stars + #ctx.sky.stars
-    result.objects = result.objects + (ctx.sky.object and 1 or 0)
+    local scene = ctx.scene or ctx.sky
+    if ctx.visible and not counted[scene] then
+      result.stars = result.stars + #scene.stars
+      result.objects = result.objects + (scene.object and 1 or 0)
+      result.showers = result.showers + (scene.shower and 1 or 0)
+      result.battles = result.battles + (scene.object and scene.object.battle and 1 or 0)
+      counted[scene] = true
+    end
   end
   for _, canvas in pairs(state.canvases) do
     result.canvases = result.canvases + (canvas.id and 1 or 0)
-    result.stars = result.stars + #canvas.sky.stars
-    result.objects = result.objects + (canvas.sky.object and 1 or 0)
   end
   return result
 end
