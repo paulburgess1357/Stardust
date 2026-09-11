@@ -39,8 +39,14 @@ function M.get(win, buf, cfg, cache, canvas_ns)
   if not api.nvim_win_is_valid(win) or not api.nvim_buf_is_valid(buf) then
     return nil, 'closed'
   end
-  if api.nvim_win_get_config(win).relative ~= '' or vim.bo[buf].buftype ~= '' then
+  local terminal = vim.bo[buf].buftype == 'terminal'
+  if
+    api.nvim_win_get_config(win).relative ~= '' or (vim.bo[buf].buftype ~= '' and not terminal)
+  then
     return nil, 'special window'
+  end
+  if terminal and not cfg.terminals then
+    return nil, 'terminals disabled'
   end
   if vim.b[buf].stardust_disable or vim.w[win].stardust_disable then
     return nil, 'disabled for this view'
@@ -48,7 +54,8 @@ function M.get(win, buf, cfg, cache, canvas_ns)
   if vim.tbl_contains(cfg.excluded_filetypes, vim.bo[buf].filetype) then
     return nil, 'excluded filetype'
   end
-  if vim.wo[win].wrap or vim.wo[win].diff or vim.wo[win].conceallevel > 0 then
+  -- Terminal buffers already contain the emulator's screen rows, even with wrap set.
+  if (vim.wo[win].wrap and not terminal) or vim.wo[win].diff or vim.wo[win].conceallevel > 0 then
     return nil, 'wrap, diff, or conceal enabled'
   end
   local count = api.nvim_buf_line_count(buf)
@@ -81,7 +88,8 @@ function M.get(win, buf, cfg, cache, canvas_ns)
       end
       local leading = line:match('^[ \t]*')
       indent = math.max(indent, M.width(leading, ts, vts))
-      widths[i] = line:find('%S') and M.width(line, ts, vts) or false
+      local text = terminal and line:gsub('%s+$', '') or line
+      widths[i] = text:find('%S') and M.width(text, ts, vts) or false
     end
     cache.key, cache.widths, cache.indent = key, widths, indent
   end
@@ -112,7 +120,7 @@ function M.get(win, buf, cfg, cache, canvas_ns)
       end
     end
   end
-  local cursor = cfg.cursor_row and api.nvim_win_get_cursor(win)[1] or -1
+  local cursor = (cfg.cursor_row or terminal) and api.nvim_win_get_cursor(win)[1] or -1
   local result = {
     rows = {},
     width = width,
@@ -124,14 +132,19 @@ function M.get(win, buf, cfg, cache, canvas_ns)
     screen_height = height,
     eof = bottom == count,
     count = count,
-    free = bottom == count and math.max(0, height - occupied.all) or 0,
+    -- Never insert virtual lines into a terminal's screen or scrollback.
+    free = not terminal and bottom == count and math.max(0, height - occupied.all) or 0,
   }
   for i, line_width in ipairs(cache.widths) do
     local line = top + i - 2
     local content = line_width or cache.indent
     local first = math.max(cfg.margin, content - wi.leftcol + cfg.margin)
     local last = width - cfg.margin
-    if blocked[line] or line + 1 == cursor or (line_width == false and not cfg.blank_lines) then
+    if
+      blocked[line]
+      or line + 1 == cursor
+      or (line_width == false and not cfg.blank_lines and not terminal)
+    then
       first = last
     end
     first = math.min(first, last)

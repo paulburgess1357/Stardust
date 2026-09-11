@@ -10,12 +10,67 @@ SETUP                                                    *stardust-setup*
 For the complete option list and compatibility notes, see README.md.
 All highlight groups set foreground colors only, preserving transparency.
 
+APPEARANCE                                               *stardust-appearance*
+>lua
+  require('stardust').setup({
+    autostart = true,
+    fps = 30,
+    enabled = {
+      stars = true, meteors = true, ships = true,
+      moons = true, planets = true, comets = true,
+    },
+    colors = {
+      stars = { '#f4f1de', '#ffe6a3' },
+      meteors = '#e9c889', ships = '#c5d6ed', moons = '#f4f1de',
+      planets = '#ffe6a3', comets = '#e9c889',
+    },
+    terminals = true,
+    meteor = { enabled = true, speed = 24 },
+    objects = {
+      enabled = true,
+      interval = { 15, 35 },
+      speed = 3, -- cells/second; comets move twice as fast
+      types = { 'moon', 'planet', 'comet', 'ship' },
+      ships = {
+        { right = '╞═◉═╡', left = '╞═◉═╡' },
+        {
+          right = { '  ▄  ', '╰─○─╯' },
+          left = { '  ▄  ', '╰─○─╯' },
+          color = '#a9cfff', -- optional per-ship override
+        },
+      },
+    },
+  })
+<
+enabled contains category switches; false disables spawning and previews.
+Omitted switches keep their defaults. Turning all six off also stops the timer.
+stars sets the count, separately from the enabled.stars switch.
+
+colors.stars is a list of 1-8 #RRGGBB values. Each other colors key accepts one
+#RRGGBB value. Ship definitions may override colors.ships with their own color.
+The old palette option and named presets have been replaced by colors.
+
+Set objects.enabled=false or meteor.enabled=false for automatic spawning off
+and manual previews on. Previews still respect the category switches. There
+is at most one object per region in addition to its meteor. objects.types
+selects which enabled kinds may appear automatically.
+Moons and planets remain stationary for 16-28 seconds and fade in and out.
+Ships fly horizontally. objects.ships is a list of 1-16 artwork definitions,
+replacing the old ship names. Each needs right and left artwork: a string or
+1-4 rows, up to 16 single-cell glyphs per row. Spaces are transparent. Artwork
+is drawn as supplied, without automatic mirroring or exhaust. A ship chooses
+one definition uniformly for its entire flight. Other artwork stays built-in.
+
 COMMANDS                                                 *:Stardust*
 
   :Stardust              Toggle the animation.
   :Stardust start        Start the animation.
   :Stardust stop         Stop and clear all decorations.
   :Stardust meteor       Attempt a meteor in the current view.
+  :Stardust moon         Preview a stationary crescent moon.
+  :Stardust planet       Preview a ringed planet.
+  :Stardust comet        Preview a slow comet.
+  :Stardust ship         Preview a randomly selected custom ship.
   :Stardust status       Show activity and skipped-window reasons.
   :checkhealth stardust  Check rendering requirements.
 
@@ -26,17 +81,27 @@ LUA                                                      *stardust-api*
   require('stardust').stop()
   require('stardust').toggle()
   require('stardust').meteor()  -- boolean: whether a clear path was found
+  require('stardust').object(kind) -- moon, planet, comet, ship; nil for random
   require('stardust').status()  -- table: activity, counts, skipped views
 
 SAFETY                                                   *stardust-placement*
 
 Text is checked on every redraw. Indentation and blank buffer lines are
 reserved by default; blank_lines=true enables stars on blank buffer lines.
-Wrap, diff, conceal, visible folds, and external virtual lines disable the
-effect for the affected view. Terminals and floating windows are skipped.
+Wrap in file buffers, diff, conceal, visible folds, and external virtual lines
+disable the effect for the affected view. Floating windows are skipped.
+
+Terminal buffers use blank rows and space after output, reserving the cursor
+row. No virtual lines are added to terminals. Set terminals=false to opt out.
+Terminal input mode keeps all eligible windows animated. Visual/select,
+command-line, and replace modes pause the effect, as does focus loss by default.
 
 The below-EOF canvas is shared by all views of a buffer and sized to their
 smallest free area. Set below_eof=false to disable it independently.
+Meteors and comets use one diagonal: two columns across per row down, with
+brightness transitions between positions at 30 FPS by default. They finish
+their trails at a side or the bottom, hiding behind text as needed.
+Mode changes and edits preserve flights while the region remains available.
 
 Set b:stardust_disable or w:stardust_disable to v:true to exclude a buffer
 or window. Temporary decorations from arbitrary third-party redraw providers

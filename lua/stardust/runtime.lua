@@ -18,11 +18,16 @@ local function redraw()
   vim.cmd('redraw!')
 end
 
-local function clear_canvas(buf)
+local function clear_canvas(buf, forget)
   if api.nvim_buf_is_valid(buf) then
     api.nvim_buf_clear_namespace(buf, canvas_ns, 0, -1)
   end
-  state.canvases[buf] = nil
+  if forget then
+    state.canvases[buf] = nil
+  elseif state.canvases[buf] then
+    -- Clearing decorations after an edit or mode change must not kill a flight.
+    state.canvases[buf].id = nil
+  end
 end
 
 local function clear_canvases()
@@ -36,8 +41,17 @@ local function paused()
     return true
   end
   -- Popups render above extmarks. Avoid decorating the text in select,
-  -- visual, terminal and command-line modes; resume automatically afterwards.
-  return api.nvim_get_mode().mode:match('^[vVsS\22\19ctR]') ~= nil
+  -- visual and command-line modes; terminal input keeps every window animated.
+  return api.nvim_get_mode().mode:match('^[vVsS\22\19cR]') ~= nil
+end
+
+local function any_enabled()
+  for _, enabled in pairs(state.cfg.enabled) do
+    if enabled then
+      return true
+    end
+  end
+  return false
 end
 
 local function attach(buf)
@@ -157,7 +171,7 @@ function M.step(dt)
   if not state.active then
     return
   end
-  if paused() then
+  if paused() or not any_enabled() then
     clear_canvases()
     return
   end
@@ -202,7 +216,7 @@ function M.step(dt)
       or groups[buf].height <= 0
       or not state.cfg.below_eof
     then
-      clear_canvas(buf)
+      clear_canvas(buf, true)
     end
   end
   if state.cfg.below_eof then
@@ -237,7 +251,7 @@ local function pulse(generation)
 end
 
 local function timer_start()
-  if not state.timer or not state.active then
+  if not state.timer or not state.active or not any_enabled() then
     return
   end
   state.last = now()
@@ -314,22 +328,40 @@ function M.stop()
   end
   api.nvim_set_decoration_provider(stars_ns, {})
   clear_canvases()
+  state.canvases = {}
   state.contexts = {}
   pcall(api.nvim_del_augroup_by_name, 'StardustRuntime')
   redraw()
 end
 
-function M.meteor()
+local function spawn(kind)
   if not state.active then
     return false
   end
   M.step(0)
   local buf, win = api.nvim_get_current_buf(), api.nvim_get_current_win()
   local canvas, ctx = state.canvases[buf], state.contexts[win]
-  if canvas and sky.meteor(canvas.sky, canvas.layout, state.cfg) then
+  local function attempt(scene, view)
+    if not view then
+      return false
+    end
+    if kind == 'meteor' then
+      return sky.meteor(scene, view, state.cfg)
+    end
+    return sky.object(scene, view, state.cfg, kind)
+  end
+  if canvas and attempt(canvas.sky, canvas.layout) then
     return true
   end
-  return ctx and ctx.layout and sky.meteor(ctx.sky, ctx.layout, state.cfg) or false
+  return ctx and attempt(ctx.sky, ctx.layout) or false
+end
+
+function M.meteor()
+  return spawn('meteor')
+end
+
+function M.object(kind)
+  return spawn(kind)
 end
 
 function M.status()
@@ -338,6 +370,7 @@ function M.status()
     paused = state.active and paused() or false,
     windows = 0,
     stars = 0,
+    objects = 0,
     canvases = 0,
     skipped = {},
   }
@@ -350,10 +383,12 @@ function M.status()
       end
     end
     result.stars = result.stars + #ctx.sky.stars
+    result.objects = result.objects + (ctx.sky.object and 1 or 0)
   end
   for _, canvas in pairs(state.canvases) do
-    result.canvases = result.canvases + 1
+    result.canvases = result.canvases + (canvas.id and 1 or 0)
     result.stars = result.stars + #canvas.sky.stars
+    result.objects = result.objects + (canvas.sky.object and 1 or 0)
   end
   return result
 end
