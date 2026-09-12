@@ -76,6 +76,8 @@ test(
   local resolve=require('stardust.config').resolve
   for _,opts in ipairs({{fps=0},{fps=121},{fps=0/0},{fps={min=30,max=60}},
     {stars=-1},{stars=math.huge},{stars=1.5},{meteors=1},{objects=false},{objects={'saturn'}},
+    {shower_interval=-1},{shower_interval=0/0},{shower_interval=math.huge},{shower_interval=1.5},
+    {shower_interval=false},{shower_interval=86401},{enabled={ship_enemies=1}},
     {enabled=false},{enabled={stars=1}},{enabled={unknown=true}},
     {enabled={moons=false},objects={'moon','moon'}},
     {objects={'moon','moon'}},{colors=false},{colors={stars={}}},{colors={ships='red'}},
@@ -130,6 +132,45 @@ test(
   for name in pairs(vim.api.nvim_get_hl(0,{})) do
     if name:match('^Stardust') then assert(vim.api.nvim_get_hl(0,{name=name}).bg == nil,name) end
   end
+]]
+)
+
+test(
+  'colors adapt to dark, light, and transparent themes without setting a background',
+  [[
+  reset({'theme check'})
+  local normal=vim.api.nvim_get_hl(0,{name='Normal'})
+  local background=vim.o.background
+  local function brightness(color)
+    local r=math.floor(color/65536)%256
+    local g=math.floor(color/256)%256
+    local b=color%256
+    return (r*0.2126+g*0.7152+b*0.0722)/255
+  end
+  for _,theme in ipairs({'dark','light'}) do
+    vim.o.background=theme
+    for _,transparent in ipairs({false,true}) do
+      local bg=theme == 'dark' and 0x121418 or 0xf5f5f0
+      vim.api.nvim_set_hl(0,'Normal',{fg=theme == 'dark' and 0xffffff or 0x111111,bg=not transparent and bg or nil})
+      vim.api.nvim_exec_autocmds('ColorScheme',{})
+      for _,prefix in ipairs({'StardustStar1_','StardustMeteor','StardustShip','StardustEnemy','StardustLaser'}) do
+        local bright=vim.api.nvim_get_hl(0,{name=prefix..'8'})
+        local dim=vim.api.nvim_get_hl(0,{name=prefix..'1'})
+        local contrast=math.abs(brightness(bright.fg)-brightness(bg))
+        assert(contrast > 0.3,prefix..' lacks contrast on '..theme)
+        assert(contrast > math.abs(brightness(dim.fg)-brightness(bg)))
+        assert(bright.bg == nil and dim.bg == nil)
+      end
+      assert(vim.api.nvim_get_hl(0,{name='Normal'}).bg == (not transparent and bg or nil))
+    end
+  end
+  vim.o.background='dark'; vim.api.nvim_set_hl(0,'Normal',{fg=0xffffff})
+  vim.api.nvim_exec_autocmds('ColorScheme',{})
+  local dark=vim.api.nvim_get_hl(0,{name='StardustStar1_8'}).fg
+  vim.o.background='light'
+  assert(vim.api.nvim_get_hl(0,{name='StardustStar1_8'}).fg ~= dark,'background option did not refresh palette')
+  vim.o.background=background; vim.api.nvim_set_hl(0,'Normal',normal)
+  vim.api.nvim_exec_autocmds('ColorScheme',{})
 ]]
 )
 
@@ -402,6 +443,11 @@ test(
 
 for _, case in ipairs(dofile(root .. '/tests/animation.lua')) do
   test(case[1], case[2])
+end
+for _, file in ipairs({ 'events', 'battle' }) do
+  for _, case in ipairs(dofile(root .. '/tests/' .. file .. '.lua')) do
+    test(case[1], case[2])
+  end
 end
 ui.close()
 print(('%d passed, %d failed'):format(passed, failed))

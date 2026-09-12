@@ -14,9 +14,14 @@ OPTIONS                                                   *stardust-options*
 
   fps       Target updates per second, 1-120. Default: 60.
   stars     Maximum stars per scene, 0-100. Default: 32.
-  enabled   Booleans for stars, meteors, moons, planets, comets, ships.
+  shower_interval
+            Average seconds between showers, 0-86400. Default: 600.
+            Randomly waits 0.5-1.5 times this value per scene: normally
+            5-15 minutes. Use 0 to disable automatic showers.
+  enabled   Booleans for stars, meteors, moons, planets, comets, ships,
+            and ship_enemies (occasional chases with lasers and explosions).
             All default to true. False also disables previews.
-  meteors   Enable shooting stars. Default: true.
+  meteors   Enable shooting stars and showers. Default: true.
   objects   List of moon, planet, comet, ship. Default: all four.
             Use {} for no additional objects.
   colors    Foreground overrides: stars (list of 1-8 #RRGGBB colors),
@@ -29,22 +34,35 @@ All options are optional. See README.md for color and ship examples.
 Placement, cursor, filetype, and pause switches have been removed. There is
 no autostart option; setup() starts the sky. fps is a single number.
 
+Showers launch 24-48 meteors across a band about 40% of the view's width.
+With ship_enemies enabled, about one in four automatic ship appearances can
+become a chase. Most ships fly solo. Pursuers arrive at varying times and ease
+into the enemy's lane over about 1-2 seconds. Spacing and speeds vary. The first
+hit destroys the enemy; boosting, slower bullets, or reaching the edge can
+allow an escape. Both ships use the ships list. Enemies have a distinct color.
+Disabling ships also disables battles. Put -- stylua: ignore above the ships
+field to preserve the artwork's row layout when formatting.
+
 COMMANDS                                                  *:Stardust*
 
   :Stardust              Toggle the sky.
   :Stardust start        Start the sky.
   :Stardust stop         Stop and remove all decorations.
   :Stardust meteor       Preview a shooting star.
+  :Stardust shower       Preview a shower, even with automatic showers off.
+  :Stardust battle       Start a fresh chase, replacing the current object.
   :Stardust moon         Preview a crescent moon.
   :Stardust planet       Preview a ringed planet.
   :Stardust comet        Preview a comet.
-  :Stardust ship         Preview a custom ship.
+  :Stardust ship         Preview an ordinary custom ship flyby.
   :Stardust status       Show activity and counts.
   :checkhealth stardust  Check rendering requirements.
 
-The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(),
-object(kind), and status(). Previews respect meteors and objects, returning
-whether the object could start. object() without a kind picks from objects.
+The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(), shower(),
+battle(), object(kind), and status(). Previews respect category switches,
+returning whether the effect could start. Battle previews replace the current
+object; other previews wait for an active effect to finish. Small views can
+prevent previews. object() without a kind picks from objects.
 
 PLACEMENT                                                 *stardust-placement*
 
@@ -57,5 +75,8 @@ Below-file virtual lines are shared by matching views of a buffer. Views with
 different geometry keep separate skies on buffer lines. Scrolling and edits
 clear stale decorations. Files and terminal scrollback are never changed.
 Highlights preserve the colorscheme background and terminal transparency.
+Foreground brightness adapts to Normal's background for light/dark contrast.
+For transparent themes, set background=light or background=dark to match the
+terminal. Colors refresh on colorscheme and background changes.
 
 vim:tw=78:ts=8:ft=help:norl:

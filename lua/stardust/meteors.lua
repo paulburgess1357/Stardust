@@ -79,8 +79,15 @@ function M.shower(scene, view, cfg)
       x = view.width - 1 - x
     end
     local body = M.new(x, 1, dx, 16 + scene.random() * 16, 6 + math.floor(scene.random() * 5))
-    body.delay = i == 1 and 0 or scene.random() * 3.5
     shower.meteors[#shower.meteors + 1] = body
+  end
+  -- Shuffle the lanes, then spread launches across the burst without long gaps.
+  for i = count, 2, -1 do
+    local j = math.floor(scene.random() * i) + 1
+    shower.meteors[i], shower.meteors[j] = shower.meteors[j], shower.meteors[i]
+  end
+  for i, body in ipairs(shower.meteors) do
+    body.delay = i == 1 and 0 or (i - 1 + scene.random()) * 3.5 / count
   end
   scene.shower = shower
   return true

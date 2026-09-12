@@ -77,7 +77,8 @@ function M.register_commands()
     elseif action == 'meteor' or action == 'shower' or action == 'battle' then
       if not M[action]() then
         vim.notify(
-          'Stardust: effect disabled, already active, or no room in this view',
+          action == 'battle' and 'Stardust: battles disabled or no room for a chase in this view'
+            or 'Stardust: effect disabled, already active, or no room in this view',
           vim.log.levels.INFO
         )
       end

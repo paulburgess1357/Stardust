@@ -145,7 +145,10 @@ local function stationary(sky, layout, sprite)
 end
 
 function M.object(sky, layout, cfg, kind, encounter)
-  if sky.object then
+  local automatic = kind == nil
+  -- An explicit battle preview replaces the current object once a chase fits.
+  -- Automatic appearances still wait for the current object to finish.
+  if sky.object and not encounter then
     return false
   end
   if not kind then
@@ -176,7 +179,7 @@ function M.object(sky, layout, cfg, kind, encounter)
     sprite = ship[object.dx == 1 and 'right' or 'left'].cells
   end
   object.kind, object.sprite, object.variant = kind, sprite, variant
-  if ship and cfg.enabled.ship_enemies and (encounter or sky.random() < 0.25) then
+  if ship and cfg.enabled.ship_enemies and (encounter or (automatic and sky.random() < 0.25)) then
     local started = battle.start(sky, layout, cfg, object)
     if encounter and not started then
       return false
@@ -188,7 +191,7 @@ function M.object(sky, layout, cfg, kind, encounter)
 end
 
 function M.battle(sky, layout, cfg)
-  if sky.object or not cfg.kinds.ship or not cfg.enabled.ship_enemies then
+  if not cfg.kinds.ship or not cfg.enabled.ship_enemies then
     return false
   end
   for _ = 1, 48 do
@@ -259,7 +262,7 @@ function M.step(sky, layout, cfg, dt, color_count)
   local shower_dt = dt
   if sky.next_shower and sky.age >= sky.next_shower then
     local due = sky.next_shower
-    if not sky.shower and M.shower(sky, layout, cfg) then
+    if not sky.shower and meteors.shower(sky, layout, cfg) then
       shower_dt = sky.age - due
     end
     sky.next_shower = next_shower(sky, cfg)
@@ -276,7 +279,8 @@ function M.step(sky, layout, cfg, dt, color_count)
   if object and object.battle then
     if not cfg.enabled.ship_enemies then
       -- Resume an ordinary flight from the pursuer's current position.
-      object.origin_x, object.step, object.travel = object.x, 0, 0
+      object.origin_x, object.origin_y = object.x, object.y
+      object.step, object.travel = 0, 0
       object.battle = nil
     elseif not battle.step(object, layout, dt) then
       sky.object = nil

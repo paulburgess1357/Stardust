@@ -13,7 +13,7 @@ local ok, result = pcall(
     local samples = {}
     for _=1,240 do
       local start = vim.uv.hrtime()
-      if active then rt.step(1/15) end
+      if active then rt.step(1/60) end
       vim.cmd('redraw!')
       samples[#samples+1] = (vim.uv.hrtime()-start)/1e6
     end
@@ -25,8 +25,15 @@ local ok, result = pcall(
   for _=1,60 do rt.step(1/15) end
   local active = measure(true)
   local status = sd.status()
+  sd.setup({shower_interval=0,objects={'ship'}})
+  rt.step(0)
+  for _,win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    vim.api.nvim_set_current_win(win)
+    assert(sd.shower() and sd.battle())
+  end
+  local effects = measure(true)
   sd.stop()
-  return {baseline=baseline,active=active,windows=status.windows,stars=status.stars,screen='180x56',samples=240}
+  return {baseline=baseline,stars_only=active,showers_and_battles=effects,windows=status.windows,stars=status.stars,screen='180x56',samples=240}
 ]]
 )
 ui.close()

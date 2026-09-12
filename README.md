@@ -1,6 +1,6 @@
 # Stardust
 
-Stars, meteors, and tiny celestial objects around your text in Neovim.
+Stars, meteor showers, and tiny ship chases around your text in Neovim.
 The sky stays on while you move, type commands, select text, use a terminal,
 or open a dashboard. It never edits your files or undo history.
 
@@ -16,6 +16,16 @@ vim.opt.runtimepath:prepend(vim.fn.expand('~/Repos/Stardust'))
 require('stardust').setup({
   fps = 60,
   stars = 32,
+  shower_interval = 600, -- seconds; random showers every 5–15 minutes
+  enabled = {
+    stars = true,
+    meteors = true,
+    moons = true,
+    planets = true,
+    comets = true,
+    ships = true,
+    ship_enemies = true,
+  },
 })
 ```
 
@@ -31,7 +41,8 @@ Omit any option to use its default.
 | --- | --- | --- |
 | `fps` | `60` | Target updates per second, 1–120 |
 | `stars` | `32` | Maximum stars per scene, 0–100 |
-| `enabled` | All `true` | Category booleans: `stars`, `meteors`, `moons`, `planets`, `comets`, `ships` |
+| `shower_interval` | `600` | Average seconds between showers; `0` disables automatic showers |
+| `enabled` | All `true` | Booleans shown above; `ship_enemies` allows occasional ship battles |
 | `meteors` | `true` | Enable shooting stars |
 | `objects` | `{ 'moon', 'planet', 'comet', 'ship' }` | Which other objects can appear; `{}` disables them |
 | `colors` | White/yellow stars and muted object colors | Optional foreground color overrides |
@@ -40,6 +51,21 @@ Omit any option to use its default.
 Use `enabled = { ships = false }` to turn a category off. Omitted switches
 remain `true`. These switches also apply to preview commands. `stars` still
 sets the star count, and the `ships` array holds the editable artwork.
+
+Showers randomly wait between half and one-and-a-half times `shower_interval`
+(an integer from 0–86400 seconds). The default is 5–15 minutes per scene.
+Each burst launches 24–48 meteors over a few seconds across a band roughly
+40% of the view's width. Trails keep moving until they leave the viewport.
+`enabled.meteors = false` disables lone meteors and showers together.
+
+With `enabled.ship_enemies = true`, roughly one in four automatic ship appearances
+can be a chase when there is room. Most ships fly solo. Pursuers arrive after
+varying delays, ease into the enemy's lane over about 1–2 seconds, and fire short
+bursts. Spacing and speeds vary. The first bullet to hit destroys the enemy at
+the impact point; enemies can boost away, outrun slower bullets, or reach the
+edge before a bullet catches them.
+The pursuer flies on. Both ships use the `ships` artwork; enemies have a distinct
+color. Turning off `ships` also turns off battles.
 
 For just the stars:
 
@@ -59,11 +85,18 @@ require('stardust').setup({
     planets = '#ffe6a3',
     comets = '#e9c889',
   },
+  -- stylua: ignore
   ships = {
-    { right = '╞═◉═╡', left = '╞═◉═╡' },
+    { right = '╺══◈══►', left = '◄══◈══╸' },
     {
-      right = { '  ▄  ', '╰─○─╯' },
-      left = { '  ▄  ', '╰─○─╯' },
+      right = {
+        '  ▄▖',
+        '╾═◉▐▶',
+      },
+      left = {
+        ' ▗▄',
+        '◀▌◉═╼',
+      },
       color = '#a9cfff', -- optional per-ship color
     },
   },
@@ -72,9 +105,13 @@ require('stardust').setup({
 
 Colors use `#RRGGBB`. Stars accept 1–8 colors. Ships accept 1–16 definitions;
 each direction is a string or 1–4 rows, up to 16 single-cell characters wide.
-Spaces are transparent. Highlights set foreground colors only, preserving
-terminal transparency. Dim shades use the colorscheme background, or `#121418`
-when it is transparent.
+Spaces are transparent. The `-- stylua: ignore` comment preserves the artwork's
+row layout when formatting. Highlights set foreground colors only, preserving
+the colorscheme background, selections, and terminal transparency. Shades use
+`Normal`'s background and adjust foreground brightness for contrast on light
+or dark themes. Colors refresh when the colorscheme or `background` changes.
+With a transparent theme, Neovim's `background=dark` or `background=light`
+provides the hint; the terminal's actual background color is not available.
 
 The old configuration switches for cursor rows, blank lines, filetypes,
 terminals, focus, and modes are removed. There is no `autostart` option:
@@ -85,20 +122,26 @@ use the `objects` list and `ships` list shown above.
 
 - `:Stardust` toggles the sky; `:Stardust start` and `:Stardust stop` are explicit.
 - `:Stardust meteor`, `moon`, `planet`, `comet`, and `ship` preview that object.
+- `:Stardust ship` always previews an ordinary flyby.
+- `:Stardust shower` previews a burst immediately, even with automatic showers off.
+- `:Stardust battle` starts a fresh ship chase, replacing any current object or chase.
 - `:Stardust status` reports activity, target FPS, and particle counts.
 - `:checkhealth stardust` checks the environment.
 
 The same controls are available as `setup(opts)`, `start()`, `stop()`, `toggle()`,
-`meteor()`, `object(kind)`, and `status()` on `require('stardust')`.
-Previews respect `meteors` and `objects` and return whether a flight could start.
+`meteor()`, `shower()`, `battle()`, `object(kind)`, and `status()` on
+`require('stardust')`. Previews respect category switches and return whether
+the effect could start. Battle previews replace the current object; other
+previews wait for an active effect to finish. A small view can prevent a preview.
 
 ## Rendering
 
 One timer drives the sky using elapsed time. Higher FPS smooths brightness
 between terminal cells; it does not change travel speed. Meteors and comets
 follow a diagonal until their trails leave a viewport edge. Ships fly across;
-moons and planets fade in place. There is at most one meteor and one other
-object per scene.
+moons and planets fade in place. Each scene has at most one lone meteor,
+one shower, and one other object or ship encounter. Views sharing a canvas
+also share their effects and timers.
 
 Placement follows Neovim's displayed text positions, including wrapping,
 Unicode, tabs, folds, dashboards, and terminal buffers. Text and stored virtual
