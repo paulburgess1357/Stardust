@@ -52,7 +52,12 @@ vim.opt.runtimepath:prepend(vim.fn.expand('~/Repos/Stardust'))
 require('stardust').setup()
 ```
 
-`setup()` starts the sky. To try it without installing anything, run
+That's it. The sky starts automatically: `setup()` turns it on as soon as
+Neovim loads your config, and with lazy.nvim the `opts = {}` line calls
+`setup()` for you. Nothing else needs to be enabled.
+
+If you'd rather start it by hand, skip `setup()` and run `:Stardust` whenever
+you want it. To try it without installing anything, run
 `nvim -u examples/minimal.lua` from the repository root.
 
 ## Settings
