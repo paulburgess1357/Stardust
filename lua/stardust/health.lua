@@ -12,6 +12,13 @@ function M.check()
   else
     vim.health.warn('Set termguicolors for smooth brightness changes')
   end
+  if vim.o.ambiwidth == 'double' then
+    vim.health.warn(
+      'ambiwidth=double makes the built-in glyphs two cells wide; artwork must use narrow characters'
+    )
+  else
+    vim.health.ok('Glyphs render as single cells')
+  end
   local normal = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
   vim.health.info(
     normal.bg and 'Normal has a background color; stars preserve it'

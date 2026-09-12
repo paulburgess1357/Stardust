@@ -46,7 +46,7 @@ Omit any option to use its default.
 | `meteors` | `true` | Enable shooting stars |
 | `objects` | `{ 'moon', 'planet', 'comet', 'ship' }` | Which other objects can appear; `{}` disables them |
 | `colors` | White/yellow stars and muted object colors | Optional foreground color overrides |
-| `ships` | Two built-in ships | Optional custom artwork |
+| `ships` | Ten built-in ships | Optional custom artwork |
 
 Use `enabled = { ships = false }` to turn a category off. Omitted switches
 remain `true`. These switches also apply to preview commands. `stars` still
@@ -148,6 +148,7 @@ Unicode, tabs, folds, dashboards, and terminal buffers. Text and stored virtual
 text stay readable. Stars hidden by text keep their age and position, so cursor
 movement and temporary decorations do not erase the sky. No filetype or mode
 switches turn it off. A completely occupied row simply has no room to draw.
+Floating windows (popups, pickers, hover documentation) are left alone.
 
 The space below the last line uses virtual lines. Because these are scoped to
 a buffer, matching views of that buffer share a canvas sized to fit all views.

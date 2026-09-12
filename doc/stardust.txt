@@ -34,10 +34,10 @@ All options are optional. See README.md for color and ship examples.
 Placement, cursor, filetype, and pause switches have been removed. There is
 no autostart option; setup() starts the sky. fps is a single number.
 
-Showers launch 24-48 meteors across a band about 40% of the view's width.
-With ship_enemies enabled, about one in four automatic ship appearances can
-become a chase. Most ships fly solo. Pursuers arrive at varying times and ease
-into the enemy's lane over about 1-2 seconds. Spacing and speeds vary. The first
+Showers launch 24-48 meteors across a band about 40% of the view's width. With
+ship_enemies enabled, about one in four automatic ship appearances can become
+a chase. Most ships fly solo. Pursuers arrive at varying times and ease into
+the enemy's lane over about 1-2 seconds. Spacing and speeds vary. The first
 hit destroys the enemy; boosting, slower bullets, or reaching the edge can
 allow an escape. Both ships use the ships list. Enemies have a distinct color.
 Disabling ships also disables battles. Put -- stylua: ignore above the ships
@@ -58,18 +58,19 @@ COMMANDS                                                  *:Stardust*
   :Stardust status       Show activity and counts.
   :checkhealth stardust  Check rendering requirements.
 
-The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(), shower(),
-battle(), object(kind), and status(). Previews respect category switches,
-returning whether the effect could start. Battle previews replace the current
-object; other previews wait for an active effect to finish. Small views can
-prevent previews. object() without a kind picks from objects.
+The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(),
+shower(), battle(), object(kind), and status(). Previews respect category
+switches, returning whether the effect could start. Battle previews replace
+the current object; other previews wait for an active effect to finish. Small
+views can prevent previews. object() without a kind picks from objects.
 
 PLACEMENT                                                 *stardust-placement*
 
 The sky runs in every mode and buffer type, including startup dashboards.
-Cursor movement does not clear it. Text and virtual text hide particles in
-occupied cells without deleting them. Positions follow the visible viewport,
-including wrapped lines, Unicode, tabs, and folds.
+Floating windows are skipped. Cursor movement does not clear it. Text and
+virtual text hide particles in occupied cells without deleting them.
+Positions follow the visible viewport, including wrapped lines, Unicode, tabs,
+and folds.
 
 Below-file virtual lines are shared by matching views of a buffer. Views with
 different geometry keep separate skies on buffer lines. Scrolling and edits

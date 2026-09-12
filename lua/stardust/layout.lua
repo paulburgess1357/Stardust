@@ -20,6 +20,10 @@ function M.get(win, buf, cache, canvas_ns)
   if not api.nvim_win_is_valid(win) or not api.nvim_buf_is_valid(buf) then
     return nil, 'closed'
   end
+  -- Popups, pickers, and hover documentation are not part of the sky.
+  if api.nvim_win_get_config(win).relative ~= '' then
+    return nil, 'floating window'
+  end
   local wi = vim.fn.getwininfo(win)[1]
   local width, height = wi.width - wi.textoff, wi.height
   if width <= MARGIN * 2 or height < 1 then

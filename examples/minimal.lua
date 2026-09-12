@@ -1,4 +1,4 @@
--- Try with: nvim -u /home/paul/Repos/Stardust/examples/minimal.lua
+-- Try with: nvim -u examples/minimal.lua (from the repository root)
 local root = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h:h')
 vim.opt.runtimepath:prepend(root)
 vim.opt.termguicolors = true

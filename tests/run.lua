@@ -365,6 +365,24 @@ ui.request('nvim_input', '<Esc>')
 ui.lua([[vim.api.nvim_win_close(popup,true)]])
 
 test(
+  'floating windows receive no stars or virtual lines',
+  [[
+  reset({'body'})
+  local buf=vim.api.nvim_create_buf(false,true)
+  vim.api.nvim_buf_set_lines(buf,0,-1,false,{'hover doc','signature'})
+  local win=vim.api.nvim_open_win(buf,false,{relative='editor',row=5,col=20,width=50,height=8,style='minimal',border='single'})
+  advance()
+  assert(sd.status().windows == 1 and sd.status().skipped[win] == 'floating window')
+  assert(#marks(buf) == 0 and #marks() == 1)
+  for row=7,14 do for col=22,70 do
+    local glyph=vim.fn.screenstring(row,col)
+    assert(glyph ~= '·' and glyph ~= '∘' and glyph ~= '✧' and glyph ~= '✦','star inside a float at '..row..':'..col)
+  end end
+  vim.api.nvim_win_close(win,true)
+]]
+)
+
+test(
   'terminal input and output use the same placement rules',
   [[
   reset({'file'})
