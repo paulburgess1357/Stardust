@@ -7,7 +7,11 @@ The sky stays on while you edit, run commands, select text, use a terminal, or
 sit on a dashboard. It only draws on empty cells, never touches your files or
 undo history, and leaves nothing behind when you turn it off.
 
-<!-- TODO: demo video -->
+https://github.com/user-attachments/assets/00e662a3-1332-4e11-99b9-4d8abbf1a751
+
+The demo triggers effects by hand with the preview commands so they show up
+quickly. In normal use everything appears on its own, as often as your settings
+say.
 
 Stardust was created 100% by Astra and Fable. Every line of code, test, and
 documentation was written by them. The human involved asked for things and
