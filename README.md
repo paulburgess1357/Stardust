@@ -16,8 +16,13 @@ watched the stars.
 ## Requirements
 
 - Neovim 0.10 or newer
-- `termguicolors` enabled for smooth brightness changes
 - No dependencies
+- True color for smooth fades. It is a Neovim option, and most setups already
+  turn it on:
+
+```lua
+vim.opt.termguicolors = true
+```
 
 ## Install
 
@@ -48,15 +53,31 @@ require('stardust').setup()
 
 ## Settings
 
-Everything is optional. Every category is a level from 0 (off) to 10
-(constant). These are the defaults:
+Everything is optional, and `setup()` with no arguments gives you the defaults
+below. Every category is a level from 0 to 10, and 0 turns that category off
+along with its preview command.
+
+- **`stars`** is density. Level 3 is about one star per 100 empty cells,
+  level 10 about one per 30.
+- **`meteors`, `showers`, and every object kind** are frequency: how often one
+  appears. Level 1 is about once an hour and each level doubles that. Waits
+  vary between half and one and a half times the average, and every kind runs
+  on its own timer, so several things can be on screen at once.
+
+| Level | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| About every | 60 min | 30 min | 15 min | 7.5 min | 4 min | 2 min | 1 min | 30 s | 15 s | 7 s |
+
+- **`battles`** is a share of ship flybys that turn into a chase. Level 3 is
+  about 30%, level 10 is every one. `ships = 0` also turns off battles.
+- **`floating_windows`** also animates popups, pickers, and hover docs.
 
 ```lua
 require('stardust').setup({
   fps = 60,
-  floating_windows = false, -- also animate popups, pickers, and hover docs
-  stars = 3, -- density
-  meteors = 7, -- everything below is frequency
+  floating_windows = false,
+  stars = 3,
+  meteors = 7,
   showers = 3,
   moons = 5,
   planets = 5,
@@ -68,23 +89,13 @@ require('stardust').setup({
   satellites = 4,
   ufos = 3,
   ships = 6,
-  battles = 3, -- share of ship flybys that turn into a chase
+  battles = 3,
 })
 ```
 
-Calling `setup()` again applies new settings. Set a category to `0` to turn it
-off, including its preview command. `ships = 0` also turns off battles.
-
-**Frequency** doubles with each level. Level 1 is about once an hour, level 7
-about once a minute, level 10 about every seven seconds. Waits vary between
-half and one and a half times that average. Each kind keeps its own timer, so
-objects can share the screen.
-
-**Star density** is about one star per 100 empty cells at level 3 and one per
-30 at level 10.
-
-**Battles** is a share: level 3 turns about 30% of automatic ship flybys into
-a chase, level 10 turns every one.
+Calling `setup()` again applies new settings. For a fully commented setup with
+every option, colors, and the built-in ship artwork, see
+[examples/config.lua](examples/config.lua).
 
 Colors and ship artwork can be customized too:
 
