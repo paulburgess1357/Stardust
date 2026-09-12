@@ -1,3 +1,4 @@
+local objects = require('stardust.objects')
 local M = { levels = 8 }
 
 local function rgb(value)
@@ -40,15 +41,19 @@ function M.setup(cfg)
     end
     return groups
   end
-  local result = { stars = {}, ships = {} }
+  local function group(name)
+    return 'Stardust' .. name:gsub('^%l', string.upper)
+  end
+  local result = { stars = {}, fleet = {} }
   for index, fg in ipairs(cfg.colors.stars) do
     result.stars[index] = ramp(('StardustStar%d_'):format(index), fg)
   end
-  for _, kind in ipairs({ 'meteor', 'moon', 'planet', 'comet', 'ship' }) do
-    result[kind] = ramp('Stardust' .. kind:gsub('^%l', string.upper), cfg.colors[kind .. 's'])
+  result.meteor = ramp(group('meteor'), cfg.colors.meteors)
+  for _, kind in ipairs(objects.kinds) do
+    result[kind.name] = ramp(group(kind.name), cfg.colors[kind.plural])
   end
-  for index, ship in ipairs(cfg.ships) do
-    result.ships[index] = ship.color and ramp(('StardustShip%d_'):format(index), ship.color)
+  for index, ship in ipairs(cfg.fleet) do
+    result.fleet[index] = ship.color and ramp(('StardustShip%d_'):format(index), ship.color)
       or result.ship
   end
   result.enemy = ramp('StardustEnemy', '#e58d91')

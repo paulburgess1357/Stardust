@@ -8,7 +8,7 @@ local ok, result = pcall(
   vim.api.nvim_buf_set_lines(0,0,-1,false,lines)
   vim.cmd('vsplit'); vim.cmd('split'); vim.cmd('wincmd l'); vim.cmd('split')
   local sd, rt = require('stardust'), require('stardust.runtime')
-  sd.setup({meteors=false,objects={}}); sd.stop()
+  sd.setup({meteors=0,showers=0,moons=0,planets=0,comets=0,ships=0}); sd.stop()
   local function measure(active)
     local samples = {}
     for _=1,240 do
@@ -25,7 +25,7 @@ local ok, result = pcall(
   for _=1,60 do rt.step(1/15) end
   local active = measure(true)
   local status = sd.status()
-  sd.setup({shower_interval=0,objects={'ship'}})
+  sd.setup({showers=1,moons=0,planets=0,comets=0})
   rt.step(0)
   for _,win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     vim.api.nvim_set_current_win(win)

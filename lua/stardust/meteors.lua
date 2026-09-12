@@ -63,7 +63,7 @@ function M.draw(body, colors, add)
 end
 
 function M.shower(scene, view, cfg)
-  if scene.shower or not cfg.meteors or view.area == 0 or view.width < 20 or view.height < 6 then
+  if scene.shower or cfg.showers <= 0 or view.area == 0 or view.width < 20 or view.height < 6 then
     return false
   end
   local dx = scene.random() < 0.5 and -1 or 1

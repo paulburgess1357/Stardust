@@ -36,7 +36,8 @@ local function clear_canvases()
 end
 
 local function any_enabled()
-  return state.cfg.stars > 0 or state.cfg.meteors or #state.cfg.objects > 0
+  local cfg = state.cfg
+  return cfg.stars > 0 or cfg.meteors > 0 or cfg.showers > 0 or #cfg.objects > 0
 end
 
 local function attach(buf)
@@ -93,7 +94,7 @@ local function render_window(_, win, buf)
       return
     end
     -- Re-evaluate occupancy during every redraw, including edits between ticks.
-    local view = layout.get(win, buf, ctx.cache, canvas_ns)
+    local view = layout.get(win, buf, ctx.cache, canvas_ns, state.cfg.floating_windows)
     local canvas = state.canvases[buf]
     local previous = canvas and canvas.views[win]
     if
@@ -190,7 +191,7 @@ function M.step(dt)
     groups[buf] = group
     local ctx = context(win, buf)
     ctx.visible = visible[win] or false
-    local view, reason = layout.get(win, buf, ctx.cache, canvas_ns)
+    local view, reason = layout.get(win, buf, ctx.cache, canvas_ns, state.cfg.floating_windows)
     ctx.reason, ctx.layout = reason, view
     seen[win] = true
     if view then

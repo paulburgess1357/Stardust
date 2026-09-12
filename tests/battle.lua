@@ -1,14 +1,14 @@
 local context = [[
   local sky=require('stardust.sky')
-  local opts={stars=0,meteors=false,objects={'ship'},
-    ships={{right={' A ','BCD',' E '},left={' a ','bcd',' e '}}}}
+  local opts={stars=0,meteors=0,showers=0,moons=0,planets=0,comets=0,ships=6,
+    fleet={{right={' A ','BCD',' E '},left={' a ','bcd',' e '}}}}
   local cfg=require('stardust.config').resolve(opts)
   local palette=require('stardust.palette').setup(cfg)
   local view=require('stardust.layout').empty(160,40)
   local function create(seed)
     local scene=sky.new(seed)
     assert(sky.battle(scene,view,cfg))
-    scene.next_object=math.huge
+    hold(scene)
     return scene,scene.object,scene.object.battle
   end
   local function find(predicate)
@@ -56,10 +56,19 @@ return {
     table.sort(arrivals); table.sort(speeds); table.sort(lasers)
     assert(arrivals[#arrivals]-arrivals[1] > 3,'pursuers always arrive together')
     assert(speeds[#speeds]-speeds[1] > 3 and lasers[#lasers]-lasers[1] > 20)
-    cfg.enabled.ship_enemies=false
+    cfg.battles=0
     local scene=sky.new(7919)
     assert(not sky.battle(scene,view,cfg))
     assert(sky.object(scene,view,cfg) and not scene.object.battle)
+    cfg.battles=10
+    local every=0
+    for seed=1,40 do
+      scene=sky.new(seed*7919)
+      assert(sky.object(scene,view,cfg))
+      if scene.object.battle then every=every+1 end
+    end
+    assert(every == 40,'level 10 should turn every automatic flight into a chase')
+    cfg.battles=3
   ]],
   },
   {
@@ -177,10 +186,10 @@ return {
       end
       assert(laser and laser.y == battle.row)
       assert(laser.x == ship.x+(battle.gun_x+1)*ship.dx,'laser missed the muzzle')
-      cfg.enabled.ship_enemies=false
+      cfg.battles=0
       sky.step(scene,view,cfg,0,2); local y=ship.y
       sky.step(scene,view,cfg,0.1,2); assert(ship.y == y)
-      cfg.enabled.ship_enemies=true
+      cfg.battles=3
     end
     assert(vim.tbl_count(directions) == 4)
   ]],
@@ -193,7 +202,7 @@ return {
     sky.new=function() scene=create_sky(7919); return scene end
     reset({'x'},opts); rt.step(0); sky.new=create_sky
     assert(sd.battle())
-    scene.next_object=math.huge
+    hold(scene)
     local battle=scene.object.battle
     local contact=battle.shots[1].contact
     assert(contact,'test chase has no collision')

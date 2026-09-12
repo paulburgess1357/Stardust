@@ -1,30 +1,20 @@
+local objects = require('stardust.objects')
 local M = {}
 
+-- Levels run from 0 (off) to 10 (constant). See README.md for the scale.
 M.defaults = {
   fps = 60,
-  stars = 32,
-  shower_interval = 600,
-  enabled = {
-    stars = true,
-    meteors = true,
-    moons = true,
-    planets = true,
-    comets = true,
-    ships = true,
-    ship_enemies = true,
-  },
-  meteors = true,
-  objects = { 'moon', 'planet', 'comet', 'ship' },
+  floating_windows = false,
+  stars = 3,
+  meteors = 7,
+  showers = 3,
+  battles = 3,
   colors = {
     stars = { '#f4f1de', '#ffe6a3' },
     meteors = '#e9c889',
-    ships = '#c5d6ed',
-    moons = '#f4f1de',
-    planets = '#ffe6a3',
-    comets = '#e9c889',
   },
   -- stylua: ignore
-  ships = {
+  fleet = {
     { right = '╺══◈══►', left = '◄══◈══╸' },
     { right = '·∘○╡═◉═╞▶', left = '◀╡═◉═╞○∘·' },
     { right = '─═◆═▶', left = '◀═◆═─' },
@@ -64,6 +54,16 @@ M.defaults = {
     },
   },
 }
+for _, kind in ipairs(objects.kinds) do
+  M.defaults[kind.plural] = kind.level
+  M.defaults.colors[kind.plural] = kind.color
+end
+
+local option_names = {}
+for key in pairs(M.defaults) do
+  option_names[#option_names + 1] = key
+end
+table.sort(option_names)
 
 local function fail(key, expected)
   error('stardust: ' .. key .. ' must be ' .. expected, 3)
@@ -73,6 +73,10 @@ local function number(key, value, low, high)
   if type(value) ~= 'number' or value ~= value or value < low or value > high or value % 1 ~= 0 then
     fail(key, ('an integer between %s and %s'):format(low, high))
   end
+end
+
+local function level(key, value)
+  number(key, value, 0, 10)
 end
 
 local function color(key, value)
@@ -133,42 +137,26 @@ function M.resolve(opts)
   end
   for key in pairs(opts) do
     if M.defaults[key] == nil then
-      fail(key, 'one of: fps, stars, shower_interval, enabled, meteors, objects, colors, ships')
+      fail(key, 'one of: ' .. table.concat(option_names, ', '))
     end
   end
   local cfg = vim.tbl_deep_extend('force', vim.deepcopy(M.defaults), vim.deepcopy(opts))
   number('fps', cfg.fps, 1, 120)
-  number('stars', cfg.stars, 0, 100)
-  number('shower_interval', cfg.shower_interval, 0, 86400)
-  if type(cfg.meteors) ~= 'boolean' then
-    fail('meteors', 'a boolean')
+  if type(cfg.floating_windows) ~= 'boolean' then
+    fail('floating_windows', 'a boolean')
   end
-  if type(cfg.enabled) ~= 'table' then
-    fail('enabled', 'a table of category booleans')
+  level('stars', cfg.stars)
+  level('meteors', cfg.meteors)
+  level('showers', cfg.showers)
+  level('battles', cfg.battles)
+  -- Object kinds with a level above zero, in registry order.
+  cfg.objects = {}
+  for _, kind in ipairs(objects.kinds) do
+    level(kind.plural, cfg[kind.plural])
+    if cfg[kind.plural] > 0 then
+      cfg.objects[#cfg.objects + 1] = kind.name
+    end
   end
-  for key, value in pairs(cfg.enabled) do
-    if M.defaults.enabled[key] == nil then
-      fail('enabled.' .. key, 'a recognized category')
-    end
-    if type(value) ~= 'boolean' then
-      fail('enabled.' .. key, 'a boolean')
-    end
-  end
-  cfg.stars = cfg.enabled.stars and cfg.stars or 0
-  cfg.meteors = cfg.enabled.meteors and cfg.meteors
-  cfg.kinds = {}
-  list('objects', cfg.objects, 0, 4, function(key, kind)
-    if kind ~= 'moon' and kind ~= 'planet' and kind ~= 'comet' and kind ~= 'ship' then
-      fail(key, 'moon, planet, comet, or ship')
-    end
-    if cfg.kinds[kind] ~= nil then
-      fail(key, 'a distinct object kind')
-    end
-    cfg.kinds[kind] = cfg.enabled[kind .. 's']
-  end)
-  cfg.objects = vim.tbl_filter(function(kind)
-    return cfg.kinds[kind]
-  end, cfg.objects)
   if type(cfg.colors) ~= 'table' then
     fail('colors', 'a table')
   end
@@ -183,7 +171,7 @@ function M.resolve(opts)
     end
   end
   cfg.art = {}
-  list('ships', cfg.ships, 1, 16, function(key, value)
+  list('fleet', cfg.fleet, 1, 16, function(key, value)
     if type(value) ~= 'table' then
       fail(key, 'a ship with right and left artwork')
     end

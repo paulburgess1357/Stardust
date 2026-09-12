@@ -19,6 +19,10 @@ ui.lua([[
   _G.star_ns = vim.api.nvim_get_namespaces()['stardust.stars']
   _G.notices = {}
   vim.notify = function(message) notices[#notices+1]=message end
+  _G.quiet = {meteors=0,showers=0,moons=0,planets=0,comets=0,ships=0}
+  _G.hold = function(scene)
+    for _,name in ipairs({'meteor','shower','moon','planet','comet','ship'}) do scene.due[name]=math.huge end
+  end
   _G.reset = function(lines, opts)
     sd.stop()
     vim.cmd('silent! tabonly!'); vim.cmd('silent! only!'); vim.cmd('enew!')
@@ -27,7 +31,7 @@ ui.lua([[
     vim.wo.scrolloff=0; vim.wo.winbar=''; vim.wo.list=false
     vim.api.nvim_buf_set_lines(0,0,-1,false,lines or {'hello'})
     vim.api.nvim_win_set_cursor(0,{1,0})
-    sd.setup(vim.tbl_extend('force',{meteors=false,objects={}},opts or {}))
+    sd.setup(vim.tbl_extend('force',quiet,opts or {}))
     _G.notices={}
     vim.cmd('redraw!')
   end
@@ -75,41 +79,51 @@ test(
   [[
   local resolve=require('stardust.config').resolve
   for _,opts in ipairs({{fps=0},{fps=121},{fps=0/0},{fps={min=30,max=60}},
-    {stars=-1},{stars=math.huge},{stars=1.5},{meteors=1},{objects=false},{objects={'saturn'}},
-    {shower_interval=-1},{shower_interval=0/0},{shower_interval=math.huge},{shower_interval=1.5},
-    {shower_interval=false},{shower_interval=86401},{enabled={ship_enemies=1}},
-    {enabled=false},{enabled={stars=1}},{enabled={unknown=true}},
-    {enabled={moons=false},objects={'moon','moon'}},
-    {objects={'moon','moon'}},{colors=false},{colors={stars={}}},{colors={ships='red'}},
-    {colors={unknown='#ffffff'}},{ships={}},{ships={{right='x'}}},
-    {ships={{right='x',left='x',wat=true}}},{ships={{right='界',left='x'}}},
-    {ships={{right='x\ny',left='x'}}},{ships={{right='x',left='x',color=false}}},
-    {ships={{right=string.rep('x',17),left='x'}}},{cursor_row=true},{autostart=true}}) do
+    {stars=-1},{stars=11},{stars=math.huge},{stars=1.5},{stars=true},{meteors=false},{meteors=11},
+    {showers=-1},{showers=0/0},{showers=1.5},{showers=false},{moons=11},{planets='5'},{comets=-1},
+    {ships=11},{ships={{right='x',left='x'}}},{battles=11},{battles=true},
+    {floating_windows=1},{floating_windows='yes'},
+    {enabled={stars=true}},{objects={'moon'}},{shower_interval=600},{ship_enemies=3},
+    {colors=false},{colors={stars={}}},{colors={ships='red'}},
+    {colors={unknown='#ffffff'}},{fleet={}},{fleet={{right='x'}}},
+    {fleet={{right='x',left='x',wat=true}}},{fleet={{right='界',left='x'}}},
+    {fleet={{right='x\ny',left='x'}}},{fleet={{right='x',left='x',color=false}}},
+    {fleet={{right=string.rep('x',17),left='x'}}},{cursor_row=true},{autostart=true}}) do
     assert(not pcall(resolve,opts),vim.inspect(opts))
   end
-  local input={colors={stars={'#abcdef'}},ships={{right={'AB'},left={'ba'}}}}
+  local input={colors={stars={'#abcdef'}},fleet={{right={'AB'},left={'ba'}}}}
   local cfg=resolve(input)
-  cfg.colors.stars[1]='#000000'; cfg.ships[1].right[1]='changed'
-  assert(input.colors.stars[1] == '#abcdef' and input.ships[1].right[1] == 'AB')
-  assert(#resolve({objects={}}).objects == 0)
+  cfg.colors.stars[1]='#000000'; cfg.fleet[1].right[1]='changed'
+  assert(input.colors.stars[1] == '#abcdef' and input.fleet[1].right[1] == 'AB')
+  assert(#resolve({moons=0,planets=0,comets=0,ships=0}).objects == 0)
+  assert(#resolve().fleet == 10 and #resolve(input).fleet == 1,'fleet must replace, not merge')
+  local defaults=resolve()
+  for _,key in ipairs({'stars','meteors','showers','battles','moons','planets','comets','ships'}) do
+    assert(defaults[key] > 0 and defaults[key] <= 10,key)
+  end
+  assert(defaults.floating_windows == false)
 ]]
 )
 
 test(
-  'category booleans disable spawning and previews without changing other defaults',
+  'level zero disables spawning and previews without changing other defaults',
   [[
   local resolve=require('stardust.config').resolve
-  local cfg=resolve({stars=24,enabled={ships=false}})
-  assert(cfg.stars == 24 and cfg.meteors and cfg.kinds.moon and not cfg.kinds.ship)
+  local cfg=resolve({stars=2,ships=0})
+  assert(cfg.stars == 2 and cfg.meteors > 0 and cfg.moons > 0 and cfg.ships == 0)
   assert(vim.deep_equal(cfg.objects,{'moon','planet','comet'}))
   for _,kind in ipairs({'moon','planet','comet','ship'}) do
-    sd.setup({enabled={[kind..'s']=false}})
+    sd.setup({[kind..'s']=0})
     assert(not sd.object(kind))
+    assert(sd.object(kind == 'moon' and 'planet' or 'moon'),'other kinds still preview')
   end
-  sd.setup({enabled={stars=false,meteors=false,moons=false,planets=false,comets=false,ships=false}})
+  sd.setup({ships=6,battles=0}); assert(not sd.battle() and sd.object('ship'))
+  sd.setup({showers=0}); assert(not sd.shower())
+  sd.setup({meteors=0}); assert(not sd.meteor() and sd.shower())
+  sd.setup(vim.tbl_extend('force',quiet,{stars=0}))
   rt.step(0)
   assert(sd.status().stars == 0 and sd.status().canvases == 0)
-  assert(not sd.meteor())
+  assert(not sd.meteor() and not sd.object() and not sd.battle())
 ]]
 )
 
@@ -378,6 +392,9 @@ test(
     local glyph=vim.fn.screenstring(row,col)
     assert(glyph ~= '·' and glyph ~= '∘' and glyph ~= '✧' and glyph ~= '✦','star inside a float at '..row..':'..col)
   end end
+  sd.setup(vim.tbl_extend('force',quiet,{floating_windows=true})); advance()
+  assert(sd.status().windows == 2 and sd.status().skipped[win] == nil,'floating_windows did not opt in')
+  assert(#marks(buf) == 1,'opted-in float has no canvas')
   vim.api.nvim_win_close(win,true)
 ]]
 )
@@ -434,12 +451,13 @@ test(
   'preview commands and category choices stay consistent',
   [[
   for _,kind in ipairs({'meteor','moon','planet','comet','ship'}) do
-    reset({'one'},{meteors=true,objects={'moon','planet','comet','ship'}})
+    reset({'one'},{meteors=7,moons=6,planets=6,comets=6,ships=6})
     vim.cmd('Stardust '..kind); advance(30)
     assert(sd.status().active and #marks() == 1)
     assert(kind == 'meteor' and not sd.meteor() or kind ~= 'meteor' and not sd.object(kind))
   end
-  sd.setup({stars=0,meteors=false,objects={}}); rt.step(0)
+  vim.cmd('Stardust saturn'); assert(#notices == 1 and notices[1]:match('expected one of')); notices={}
+  sd.setup(vim.tbl_extend('force',quiet,{stars=0})); rt.step(0)
   assert(sd.status().stars == 0 and sd.status().canvases == 0)
   assert(not sd.meteor() and not sd.object('ship'))
 ]]

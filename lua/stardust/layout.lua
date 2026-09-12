@@ -16,12 +16,12 @@ end
 
 -- Use rendered positions, so tabs, Unicode, wraps, folds, and dashboard
 -- buffers follow the same rules. Only the empty space after text is drawn on.
-function M.get(win, buf, cache, canvas_ns)
+function M.get(win, buf, cache, canvas_ns, floating)
   if not api.nvim_win_is_valid(win) or not api.nvim_buf_is_valid(buf) then
     return nil, 'closed'
   end
-  -- Popups, pickers, and hover documentation are not part of the sky.
-  if api.nvim_win_get_config(win).relative ~= '' then
+  -- Popups, pickers, and hover documentation are opt-in.
+  if not floating and api.nvim_win_get_config(win).relative ~= '' then
     return nil, 'floating window'
   end
   local wi = vim.fn.getwininfo(win)[1]

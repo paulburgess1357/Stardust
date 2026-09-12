@@ -2,8 +2,8 @@
 local M = {}
 local meteors = require('stardust.meteors')
 local battle = require('stardust.battle')
-local MARGIN, OBJECT_SPEED = 2, 3
-local METEOR_INTERVAL, OBJECT_INTERVAL = { 25, 60 }, { 15, 35 }
+local objects = require('stardust.objects')
+local MARGIN, OBJECT_SPEED, MAX_STARS = 2, 3, 200
 local TWINKLE = { '·', '∘', '✧', '✦' }
 
 local function random_source(seed)
@@ -14,8 +14,24 @@ local function random_source(seed)
   end
 end
 
+-- Level 1 averages about once an hour and each level doubles that, so 10 is
+-- roughly every seven seconds. Waits vary between half and one and a half
+-- times the average.
+function M.mean_interval(level)
+  return 3600 / 2 ^ (level - 1)
+end
+
+local function next_time(sky, level)
+  return sky.age + M.mean_interval(level) * (0.5 + sky.random())
+end
+
+-- Stars per empty cell at a given density level, capped per scene.
+function M.star_target(level, area)
+  return math.min(MAX_STARS, math.ceil(area * level / 300))
+end
+
 function M.new(seed)
-  return { random = random_source(seed), stars = {}, meteor = nil, next_meteor = nil, age = 0 }
+  return { random = random_source(seed), stars = {}, age = 0, due = {} }
 end
 
 function M.safe(layout, x, y)
@@ -35,10 +51,6 @@ local function point(sky, layout)
     end
     cell = cell - width
   end
-end
-
-local function interval(sky, range)
-  return range[1] + sky.random() * (range[2] - range[1])
 end
 
 -- Sample one fixed diagonal: two columns across and one row down per point.
@@ -94,36 +106,25 @@ local function flight_point(body, step)
 end
 
 function M.meteor(sky, layout, cfg)
-  if sky.meteor or not cfg.meteors then
+  if sky.meteor or cfg.meteors <= 0 then
     return false
   end
   local meteor = flight(sky, layout, true)
   if meteor then
     sky.meteor = meteors.new(meteor.x, meteor.y, meteor.dx)
-    sky.next_meteor = sky.age + interval(sky, METEOR_INTERVAL)
+    sky.due.meteor = next_time(sky, cfg.meteors)
     return true
   end
   return false
-end
-
-local function next_shower(sky, cfg)
-  return sky.age + cfg.shower_interval * (0.5 + sky.random())
 end
 
 function M.shower(sky, layout, cfg)
   if not meteors.shower(sky, layout, cfg) then
     return false
   end
-  sky.next_shower = cfg.shower_interval > 0 and next_shower(sky, cfg) or nil
+  sky.due.shower = next_time(sky, cfg.showers)
   return true
 end
-
-M.objects = {
-  moon = { { 0, 0, '☾' } },
-  planet = { { 0, 0, '◉' }, { -1, 0, '─' }, { 1, 0, '─' } },
-  comet = { { 0, 0, '✧' }, { -1, 0, '•' }, { -2, 0, '·' }, { -3, 0, '·' } },
-  ship = {}, -- Artwork comes from ships in the user's configuration.
-}
 
 local function stationary(sky, layout, sprite)
   for _ = 1, 48 do
@@ -144,33 +145,32 @@ local function stationary(sky, layout, sprite)
   end
 end
 
-function M.object(sky, layout, cfg, kind, encounter)
-  local automatic = kind == nil
-  -- An explicit battle preview replaces the current object once a chase fits.
-  -- Automatic appearances still wait for the current object to finish.
+-- An explicit battle preview replaces the current object once a chase fits.
+-- Every other appearance waits for the current object to finish. Only
+-- automatic ship flights can turn into a chase by chance.
+local function spawn_object(sky, layout, cfg, name, automatic, encounter)
   if sky.object and not encounter then
     return false
   end
-  if not kind then
-    if #cfg.objects == 0 then
-      return false
-    end
-    kind = cfg.objects[math.floor(sky.random() * #cfg.objects) + 1]
-  end
-  if not M.objects[kind] or not cfg.kinds[kind] then
+  local kind = objects.by_name[name]
+  if not kind or cfg[kind.plural] <= 0 then
     return false
   end
-  local sprite, variant, ship = M.objects[kind], nil, nil
-  if kind == 'ship' then
-    variant = math.floor(sky.random() * #cfg.ships) + 1
+  local sprite, variant, ship = kind.sprite, nil, nil
+  if kind.fleet then
+    variant = math.floor(sky.random() * #cfg.art) + 1
     ship = cfg.art[variant]
   end
   local object
-  if kind == 'moon' or kind == 'planet' then
+  if kind.motion == 'stationary' then
     object = stationary(sky, layout, sprite)
   else
-    object =
-      flight(sky, layout, kind == 'comet', ship and math.max(ship.right.height, ship.left.height))
+    object = flight(
+      sky,
+      layout,
+      kind.motion == 'diagonal',
+      ship and math.max(ship.right.height, ship.left.height)
+    )
   end
   if not object then
     return false
@@ -178,42 +178,66 @@ function M.object(sky, layout, cfg, kind, encounter)
   if ship then
     sprite = ship[object.dx == 1 and 'right' or 'left'].cells
   end
-  object.kind, object.sprite, object.variant = kind, sprite, variant
-  if ship and cfg.enabled.ship_enemies and (encounter or (automatic and sky.random() < 0.25)) then
+  object.kind, object.sprite, object.variant = name, sprite, variant
+  if
+    ship
+    and cfg.battles > 0
+    and (encounter or (automatic and sky.random() < cfg.battles / 10))
+  then
     local started = battle.start(sky, layout, cfg, object)
     if encounter and not started then
       return false
     end
   end
   sky.object = object
-  sky.next_object = sky.age + interval(sky, OBJECT_INTERVAL)
+  sky.due[name] = next_time(sky, cfg[kind.plural])
   return true
 end
 
+-- Without a kind, pick any enabled kind as an automatic appearance would.
+function M.object(sky, layout, cfg, name, encounter)
+  local automatic = name == nil
+  if automatic then
+    if #cfg.objects == 0 then
+      return false
+    end
+    name = cfg.objects[math.floor(sky.random() * #cfg.objects) + 1]
+  end
+  return spawn_object(sky, layout, cfg, name, automatic, encounter)
+end
+
 function M.battle(sky, layout, cfg)
-  if not cfg.kinds.ship or not cfg.enabled.ship_enemies then
+  if objects.level(cfg, 'ship') <= 0 or cfg.battles <= 0 then
     return false
   end
   for _ = 1, 48 do
-    if M.object(sky, layout, cfg, 'ship', true) then
+    if spawn_object(sky, layout, cfg, 'ship', false, true) then
       return true
     end
   end
   return false
 end
 
+-- True once a timer at this level is due; timers for disabled levels vanish.
+local function due(sky, name, level)
+  if level <= 0 then
+    sky.due[name] = nil
+    return false
+  end
+  sky.due[name] = sky.due[name] or next_time(sky, level)
+  return sky.age >= sky.due[name]
+end
+
 function M.step(sky, layout, cfg, dt, color_count)
   dt = math.max(0, dt)
-  if cfg.meteors and cfg.shower_interval > 0 then
-    sky.next_shower = sky.next_shower or next_shower(sky, cfg)
-  else
-    sky.next_shower = nil
-  end
   sky.age = sky.age + dt
-  if not cfg.meteors then
-    sky.meteor, sky.shower = nil, nil
+  if cfg.meteors <= 0 then
+    sky.meteor = nil
   end
-  if sky.object and not cfg.kinds[sky.object.kind] then
+  if cfg.showers <= 0 then
+    sky.shower = nil
+  end
+  if sky.object and objects.level(cfg, sky.object.kind) <= 0 then
     sky.object = nil
   end
   local keep = 0
@@ -236,8 +260,7 @@ function M.step(sky, layout, cfg, dt, color_count)
   for i = #sky.stars, keep + 1, -1 do
     sky.stars[i] = nil
   end
-  local target = math.min(cfg.stars, math.ceil(layout.area / 100))
-  if keep < target then
+  if keep < M.star_target(cfg.stars, layout.area) then
     local x, y = point(sky, layout)
     if x then
       sky.stars[#sky.stars + 1] = {
@@ -251,33 +274,43 @@ function M.step(sky, layout, cfg, dt, color_count)
       }
     end
   end
-  sky.next_meteor = sky.next_meteor or (sky.age + interval(sky, METEOR_INTERVAL))
-  if cfg.meteors and sky.age >= sky.next_meteor then
+  if due(sky, 'meteor', cfg.meteors) then
     M.meteor(sky, layout, cfg)
-    sky.next_meteor = sky.age + interval(sky, METEOR_INTERVAL)
+    sky.due.meteor = next_time(sky, cfg.meteors)
   end
   if sky.meteor and not meteors.step(sky.meteor, layout, dt) then
     sky.meteor = nil
   end
   local shower_dt = dt
-  if sky.next_shower and sky.age >= sky.next_shower then
-    local due = sky.next_shower
+  if due(sky, 'shower', cfg.showers) then
+    local started = sky.due.shower
     if not sky.shower and meteors.shower(sky, layout, cfg) then
-      shower_dt = sky.age - due
+      -- The burst begins at its scheduled moment, not at this frame.
+      shower_dt = sky.age - started
     end
-    sky.next_shower = next_shower(sky, cfg)
+    sky.due.shower = next_time(sky, cfg.showers)
   end
   if sky.shower and not meteors.step_shower(sky.shower, layout, shower_dt) then
     sky.shower = nil
   end
-  sky.next_object = sky.next_object or (sky.age + interval(sky, OBJECT_INTERVAL))
-  if #cfg.objects > 0 and sky.age >= sky.next_object then
-    M.object(sky, layout, cfg)
-    sky.next_object = sky.age + interval(sky, OBJECT_INTERVAL)
+  -- Due kinds wait for the single slot rather than losing their turn, and
+  -- the longest-waiting kind goes first so a busy kind cannot starve others.
+  local waiting
+  for _, kind in ipairs(objects.kinds) do
+    if
+      due(sky, kind.name, cfg[kind.plural])
+      and (not waiting or sky.due[kind.name] < sky.due[waiting])
+    then
+      waiting = kind.name
+    end
+  end
+  if waiting and not sky.object then
+    spawn_object(sky, layout, cfg, waiting, true, false)
+    sky.due[waiting] = next_time(sky, objects.level(cfg, waiting))
   end
   local object = sky.object
   if object and object.battle then
-    if not cfg.enabled.ship_enemies then
+    if cfg.battles <= 0 then
       -- Resume an ordinary flight from the pursuer's current position.
       object.origin_x, object.origin_y = object.x, object.y
       object.step, object.travel = 0, 0
@@ -291,8 +324,8 @@ function M.step(sky, layout, cfg, dt, color_count)
       sky.object = nil
     end
   elseif object then
-    object.travel = object.travel
-      + dt * OBJECT_SPEED * (object.kind == 'comet' and 2 or 1) / object.stride
+    local kind = objects.by_name[object.kind]
+    object.travel = object.travel + dt * OBJECT_SPEED * (kind.speed or 1) / object.stride
     local steps = math.floor(object.travel + 1e-9)
     object.travel = math.max(0, object.travel - steps)
     object.step = object.step + steps
@@ -323,29 +356,31 @@ function M.frame(sky, layout, cfg, palette)
     occupied[key] = true
     cells[#cells + 1] = { x = x, y = y, glyph = glyph, hl = hl }
   end
-  if sky.meteor and cfg.meteors then
+  if sky.meteor and cfg.meteors > 0 then
     meteors.draw(sky.meteor, palette.meteor, add)
   end
-  if sky.shower and cfg.meteors then
+  if sky.shower and cfg.showers > 0 then
     meteors.draw_shower(sky.shower, palette.meteor, add)
   end
   local object = sky.object
-  if object and cfg.kinds[object.kind] then
+  if object and objects.level(cfg, object.kind) > 0 then
+    local kind = objects.by_name[object.kind]
+    local diagonal = kind.motion == 'diagonal'
     local fade = object.life
         and math.max(0, math.min(1, object.age / 2, (object.life - object.age) / 2))
       or 1
-    if object.battle and cfg.enabled.ship_enemies then
+    if object.battle and cfg.battles > 0 then
       battle.draw(object, palette, add)
     end
-    if object.kind == 'comet' and object.travel > 0.05 then
+    if diagonal and object.travel > 0.05 then
       local x, y = flight_point(object, object.step + 1)
-      add(x, y, '✧', palette.comet[math.ceil(object.travel * 7)])
+      add(x, y, '✧', palette[object.kind][math.ceil(object.travel * 7)])
     end
+    local colors = kind.fleet and palette.fleet[object.variant] or palette[object.kind]
     for index, part in ipairs(object.sprite) do
-      local colors = object.kind == 'ship' and palette.ships[object.variant] or palette[object.kind]
       local x, y = object.x + part[1] * object.dx, object.y + part[2]
-      local level = (object.kind == 'ship' and 7 or math.max(2, 8 - index)) * fade
-      if object.kind == 'comet' then
+      local level = (kind.fleet and 7 or math.max(2, 8 - index)) * fade
+      if diagonal then
         x, y = flight_point(object, object.step + part[1])
         y = y + part[2]
         level = index == #object.sprite and level * (1 - object.travel) or level - object.travel

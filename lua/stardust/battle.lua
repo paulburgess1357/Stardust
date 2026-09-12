@@ -47,7 +47,7 @@ local function contact_time(battle, shot)
 end
 
 function M.start(scene, view, cfg, ship)
-  if not cfg.enabled.ship_enemies or view.width < 50 then
+  if cfg.battles <= 0 or view.width < 50 then
     return false
   end
   local direction = ship.dx == 1 and 'right' or 'left'

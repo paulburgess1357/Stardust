@@ -5,43 +5,50 @@ Stardust requires Neovim 0.10 or newer.                     *stardust*
 SETUP                                                     *stardust-setup*
 >lua
   vim.opt.runtimepath:prepend(vim.fn.expand('~/Repos/Stardust'))
-  require('stardust').setup({ fps = 60, stars = 32 })
+  require('stardust').setup({ fps = 60, stars = 3, ships = 6 })
 <
 setup() starts the animation. Calling it again applies new options.
 Enable termguicolors for the foreground brightness ramps.
 
 OPTIONS                                                   *stardust-options*
 
+Every category is an integer level from 0 to 10. Level 0 turns the category
+off, including its preview command.
+
   fps       Target updates per second, 1-120. Default: 60.
-  stars     Maximum stars per scene, 0-100. Default: 32.
-  shower_interval
-            Average seconds between showers, 0-86400. Default: 600.
-            Randomly waits 0.5-1.5 times this value per scene: normally
-            5-15 minutes. Use 0 to disable automatic showers.
-  enabled   Booleans for stars, meteors, moons, planets, comets, ships,
-            and ship_enemies (occasional chases with lasers and explosions).
-            All default to true. False also disables previews.
-  meteors   Enable shooting stars and showers. Default: true.
-  objects   List of moon, planet, comet, ship. Default: all four.
-            Use {} for no additional objects.
+  floating_windows
+            Also animate floating windows. Default: false.
+  stars     Density, 0-10. Default: 3. About one star per 100 empty cells
+            at level 3 and one per 30 at level 10, capped at 200 per scene.
+  meteors   Lone shooting stars, 0-10. Default: 7.
+  showers   Meteor showers of 24-48 meteors, 0-10. Default: 3.
+  moons     Crescent moons, 0-10. Default: 6.
+  planets   Ringed planets, 0-10. Default: 6.
+  comets    Comets, 0-10. Default: 6.
+  ships     Ship flybys, 0-10. Default: 6.
+  battles   Share of ship flybys that become a chase, 0-10. Default: 3,
+            about 30%. Level 10 turns every automatic flyby into a chase.
   colors    Foreground overrides: stars (list of 1-8 #RRGGBB colors),
-            meteors, ships, moons, planets, comets (one color each).
-  ships     List of 1-16 ships with right and left artwork: a string or
+            meteors, moons, planets, comets, ships (one color each).
+  fleet     List of 1-16 ships with right and left artwork: a string or
             1-4 rows, at most 16 single-cell characters wide. Spaces are
-            transparent. Each ship can also have its own color.
+            transparent. Each ship can also have its own color. A custom
+            fleet replaces the built-in one.
 
-All options are optional. See README.md for color and ship examples.
-Placement, cursor, filetype, and pause switches have been removed. There is
-no autostart option; setup() starts the sky. fps is a single number.
+Frequency levels (meteors, showers, moons, planets, comets, ships) average
+about once an hour at level 1 and double with each level: level 5 is about
+every four minutes, level 7 about every minute, and level 10 about every seven
+seconds. Waits vary between half and one and a half times the average. Only
+one moon, planet, comet, or ship is on screen at a time; due kinds wait for
+the slot and the longest-waiting kind goes first.
 
-Showers launch 24-48 meteors across a band about 40% of the view's width. With
-ship_enemies enabled, about one in four automatic ship appearances can become
-a chase. Most ships fly solo. Pursuers arrive at varying times and ease into
-the enemy's lane over about 1-2 seconds. Spacing and speeds vary. The first
-hit destroys the enemy; boosting, slower bullets, or reaching the edge can
-allow an escape. Both ships use the ships list. Enemies have a distinct color.
-Disabling ships also disables battles. Put -- stylua: ignore above the ships
-field to preserve the artwork's row layout when formatting.
+All options are optional. See README.md for color and fleet examples. There
+is no autostart option; setup() starts the sky. Put -- stylua: ignore above
+the fleet field to preserve the artwork's row layout when formatting.
+
+Object kinds are defined in lua/stardust/objects.lua. Each entry names the
+kind, its option and color key, default level, motion, and sprite. Adding an
+entry adds its option, color, preview command, and spawn timer.
 
 COMMANDS                                                  *:Stardust*
 
@@ -49,12 +56,12 @@ COMMANDS                                                  *:Stardust*
   :Stardust start        Start the sky.
   :Stardust stop         Stop and remove all decorations.
   :Stardust meteor       Preview a shooting star.
-  :Stardust shower       Preview a shower, even with automatic showers off.
+  :Stardust shower       Preview a shower.
   :Stardust battle       Start a fresh chase, replacing the current object.
   :Stardust moon         Preview a crescent moon.
   :Stardust planet       Preview a ringed planet.
   :Stardust comet        Preview a comet.
-  :Stardust ship         Preview an ordinary custom ship flyby.
+  :Stardust ship         Preview an ordinary ship flyby.
   :Stardust status       Show activity and counts.
   :checkhealth stardust  Check rendering requirements.
 
@@ -67,10 +74,10 @@ views can prevent previews. object() without a kind picks from objects.
 PLACEMENT                                                 *stardust-placement*
 
 The sky runs in every mode and buffer type, including startup dashboards.
-Floating windows are skipped. Cursor movement does not clear it. Text and
-virtual text hide particles in occupied cells without deleting them.
-Positions follow the visible viewport, including wrapped lines, Unicode, tabs,
-and folds.
+Floating windows are skipped unless floating_windows is true. Cursor movement
+does not clear it. Text and virtual text hide particles in occupied cells
+without deleting them. Positions follow the visible viewport, including
+wrapped lines, Unicode, tabs, and folds.
 
 Below-file virtual lines are shared by matching views of a buffer. Views with
 different geometry keep separate skies on buffer lines. Scrolling and edits

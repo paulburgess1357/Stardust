@@ -1,6 +1,13 @@
 local M = {}
 local config = require('stardust.config')
+local objects = require('stardust.objects')
 local options
+
+local ACTIONS = { 'start', 'stop', 'toggle', 'meteor', 'shower', 'battle' }
+for _, kind in ipairs(objects.kinds) do
+  ACTIONS[#ACTIONS + 1] = kind.name
+end
+ACTIONS[#ACTIONS + 1] = 'status'
 
 function M.setup(opts)
   local resolved = config.resolve(opts)
@@ -60,8 +67,8 @@ for _, kind in ipairs({ 'meteor', 'shower', 'battle' }) do
 end
 
 function M.object(kind)
-  if kind ~= nil and not require('stardust.sky').objects[kind] then
-    error('stardust: object must be moon, planet, comet, or ship')
+  if kind ~= nil and not objects.by_name[kind] then
+    error('stardust: object must be one of: ' .. table.concat(vim.tbl_keys(objects.by_name), ', '))
   end
   if not M.status().active then
     M.start()
@@ -82,7 +89,7 @@ function M.register_commands()
           vim.log.levels.INFO
         )
       end
-    elseif action == 'moon' or action == 'planet' or action == 'comet' or action == 'ship' then
+    elseif objects.by_name[action] then
       if not M.object(action) then
         vim.notify(
           'Stardust: object disabled or no room for another in this view',
@@ -92,29 +99,14 @@ function M.register_commands()
     elseif action == 'start' or action == 'stop' or action == 'toggle' then
       M[action]()
     else
-      vim.notify(
-        'Stardust: expected start, stop, toggle, meteor, shower, battle, moon, planet, comet, ship, or status',
-        vim.log.levels.ERROR
-      )
+      vim.notify('Stardust: expected one of ' .. table.concat(ACTIONS, ', '), vim.log.levels.ERROR)
     end
   end, {
     nargs = '?',
     desc = 'Twinkling stars, meteors, and celestial objects',
     force = true,
     complete = function()
-      return {
-        'start',
-        'stop',
-        'toggle',
-        'meteor',
-        'shower',
-        'battle',
-        'moon',
-        'planet',
-        'comet',
-        'ship',
-        'status',
-      }
+      return ACTIONS
     end,
   })
 end
