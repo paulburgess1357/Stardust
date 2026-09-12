@@ -24,14 +24,14 @@ watched the stars.
 With Neovim's built-in package manager (0.12+):
 
 ```lua
-vim.pack.add({ 'https://github.com/USER/Stardust' })
+vim.pack.add({ 'https://github.com/paulburgess1357/Stardust' })
 require('stardust').setup()
 ```
 
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ 'USER/Stardust', opts = {} }
+{ 'paulburgess1357/Stardust', opts = {} }
 ```
 
 Any other plugin manager works the same way: install the repository and call
