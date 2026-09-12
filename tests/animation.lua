@@ -34,12 +34,12 @@ return {
         local scene=sky.new(17); scene.random=function() return 0.75 end
         assert(kind == 'meteor' and sky.meteor(scene,view,cfg) or sky.object(scene,view,cfg,kind))
         hold(scene)
-        local body=kind == 'meteor' and scene.meteor or scene.object
+        local body=kind == 'meteor' and scene.meteor or scene.objects[1]
         local x=body.x
         sky.step(scene,layout.empty(100,height,50),cfg,0.5,#colors.stars)
         assert(body.x ~= x and #sky.frame(scene,layout.empty(100,height,50),cfg,colors) == 0)
         for _=1,250 do sky.step(scene,view,cfg,0.1,#colors.stars) end
-        assert(scene.meteor == nil and scene.object == nil)
+        assert(scene.meteor == nil and #scene.objects == 0)
       end
     end
   ]],
@@ -79,12 +79,12 @@ return {
     for _,kind in ipairs({'moon','planet'}) do
       local scene=sky.new(19)
       assert(sky.object(scene,view,cfg,kind)); hold(scene)
-      local object=scene.object; local x,y=object.x,object.y
+      local object=scene.objects[1]; local x,y=object.x,object.y
       assert(#sky.frame(scene,view,cfg,colors) == 0)
       sky.step(scene,view,cfg,2,#colors.stars)
       assert(#sky.frame(scene,view,cfg,colors) > 0 and object.x == x and object.y == y)
       sky.step(scene,view,cfg,30,#colors.stars)
-      assert(scene.object == nil)
+      assert(#scene.objects == 0)
     end
   ]],
   },
@@ -98,15 +98,109 @@ return {
     for _,direction in ipairs({0.25,0.75}) do
       local scene=sky.new(19); scene.random=function() return direction end
       assert(sky.object(scene,view,cfg,'ship')); hold(scene)
-      local object=scene.object
+      local object=scene.objects[1]
       sky.step(scene,view,cfg,3,#colors.stars)
       local cells=sky.frame(scene,view,cfg,colors)
       assert(#cells == 3)
       local chars={}
       for _,cell in ipairs(cells) do chars[cell.glyph]=true; assert(cell.hl == colors.fleet[1][7]) end
       assert(object.dx == 1 and chars.A and chars.B and chars.C or object.dx == -1 and chars.a and chars.b and chars.c)
-      sky.step(scene,view,cfg,40,#colors.stars); assert(scene.object == nil)
+      sky.step(scene,view,cfg,40,#colors.stars); assert(#scene.objects == 0)
     end
+  ]],
+  },
+  {
+    'every registered kind previews, draws, and expires on an empty view',
+    [[
+    local sky=require('stardust.sky')
+    local objects=require('stardust.objects')
+    local cfg=require('stardust.config').resolve({stars=0,meteors=0,showers=0})
+    local palette=require('stardust.palette').setup(cfg)
+    local view=require('stardust.layout').empty(120,40)
+    for _,kind in ipairs(objects.kinds) do
+      assert(cfg[kind.plural] > 0 and cfg.colors[kind.plural],kind.name..' lacks a default level or color')
+      assert(palette[kind.name] and #palette[kind.name] == 8,kind.name..' lacks a color ramp')
+      local scene=sky.new(29)
+      assert(sky.object(scene,view,cfg,kind.name),kind.name..' could not spawn'); hold(scene)
+      assert(sky.object(scene,view,cfg,kind.name),kind.name..' refused a second object'); hold(scene)
+      assert(#scene.objects == 2,'previews must add objects, not replace them')
+      local drawn,ticks=0,0
+      while #scene.objects > 0 and ticks < 200*30 do
+        sky.step(scene,view,cfg,1/30,2); ticks=ticks+1
+        for _,cell in ipairs(sky.frame(scene,view,cfg,palette)) do
+          drawn=drawn+1
+          assert(cell.hl:match('^Stardust'),kind.name)
+        end
+      end
+      assert(drawn > 0,kind.name..' never drew')
+      assert(#scene.objects == 0,kind.name..' never expired')
+      if kind.life then assert(ticks/30 >= kind.life[1] and ticks/30 <= kind.life[2]+0.1,kind.name..' life') end
+    end
+  ]],
+  },
+  {
+    'frames cycle, spinning cells pulse, and bobbing kinds wobble within their row band',
+    [[
+    local sky=require('stardust.sky')
+    local objects=require('stardust.objects')
+    local cfg=require('stardust.config').resolve({stars=0,meteors=0,showers=0})
+    local palette=require('stardust.palette').setup(cfg)
+    local view=require('stardust.layout').empty(120,40)
+    local function watch(name,seconds,collect)
+      local scene=sky.new(31)
+      assert(sky.object(scene,view,cfg,name)); hold(scene)
+      local object=scene.objects[1]
+      local seen={}
+      for _=1,seconds*30 do
+        sky.step(scene,view,cfg,1/30,2)
+        if scene.objects[1] then collect(seen,object,sky.frame(scene,view,cfg,palette)) end
+      end
+      return seen,object
+    end
+    -- orbit: the moon visits every track position around a fixed planet
+    local seen,object=watch('orbit',6,function(seen,object,cells)
+      for _,cell in ipairs(cells) do
+        if cell.glyph ~= '◉' then seen[(cell.x-object.x)..','..(cell.y-object.y)]=true end
+        if cell.glyph == '◉' then assert(cell.x == object.x and cell.y == object.y) end
+      end
+    end)
+    assert(vim.tbl_count(seen) == 8,'orbit visited '..vim.tbl_count(seen)..' positions')
+    -- planet: ring brightness changes over time while the core stays put
+    seen=watch('planet',4,function(seen,object,cells)
+      for _,cell in ipairs(cells) do
+        if cell.x == object.x+2 then seen[cell.hl]=true end
+      end
+    end)
+    assert(vim.tbl_count(seen) >= 3,'ring never spun')
+    -- moon: phases spread across its life
+    seen=watch('moon',30,function(seen,_,cells) for _,cell in ipairs(cells) do seen[cell.glyph]=true end end)
+    assert(seen['☾'] and seen['○'] and seen['☽'],'moon skipped a phase')
+    -- pulsar: glyph beats through the frame list
+    seen=watch('pulsar',3,function(seen,_,cells) for _,cell in ipairs(cells) do seen[cell.glyph]=true end end)
+    assert(seen['·'] and seen['✹'],'pulsar did not beat')
+    -- supernova: expands then vanishes quickly
+    local widest=0
+    seen=watch('supernova',6,function(seen,object,cells)
+      for _,cell in ipairs(cells) do widest=math.max(widest,math.abs(cell.x-object.x)) end
+      seen[#cells]=true
+    end)
+    assert(widest >= 4 and seen[1],'supernova did not expand from a point')
+    -- satellite: beacon pulses while the hull stays steady
+    local beacon,hull={},{}
+    watch('satellite',3,function(_,object,cells)
+      for _,cell in ipairs(cells) do
+        if cell.glyph == '╋' then beacon[cell.hl]=true else hull[cell.hl]=true end
+      end
+    end)
+    assert(vim.tbl_count(beacon) >= 3 and vim.tbl_count(hull) == 1,'satellite beacon')
+    -- ufo: bobs one row up and down and never leaves the view
+    local rows={}
+    local _,ufo=watch('ufo',8,function(_,object,cells)
+      rows[object.y-object.origin_y]=true
+      for _,cell in ipairs(cells) do assert(cell.y >= 1 and cell.y <= view.height) end
+    end)
+    assert(rows[-1] and rows[0] and rows[1] and not rows[2] and not rows[-2],'ufo bob range')
+    assert(objects.height(objects.by_name.ufo) == 3)
   ]],
   },
   {

@@ -22,33 +22,43 @@ off, including its preview command.
             at level 3 and one per 30 at level 10, capped at 200 per scene.
   meteors   Lone shooting stars, 0-10. Default: 7.
   showers   Meteor showers of 24-48 meteors, 0-10. Default: 3.
-  moons     Crescent moons, 0-10. Default: 6.
-  planets   Ringed planets, 0-10. Default: 6.
+  moons     Moons that wax and wane, 0-10. Default: 5.
+  planets   Planets with a spinning ring, 0-10. Default: 5.
+  orbits    Planets with a moon circling them, 0-10. Default: 4.
+  pulsars   Flashing stars, 0-10. Default: 4.
+  nebulas   Faint shimmering clouds, 0-10. Default: 3.
+  supernovas
+            Brief expanding bursts, 0-10. Default: 2.
   comets    Comets, 0-10. Default: 6.
+  satellites
+            Slow crossings with a blinking beacon, 0-10. Default: 4.
+  ufos      Bobbing saucers with alternating lights, 0-10. Default: 3.
   ships     Ship flybys, 0-10. Default: 6.
   battles   Share of ship flybys that become a chase, 0-10. Default: 3,
             about 30%. Level 10 turns every automatic flyby into a chase.
-  colors    Foreground overrides: stars (list of 1-8 #RRGGBB colors),
-            meteors, moons, planets, comets, ships (one color each).
+  colors    Foreground overrides: stars (list of 1-8 #RRGGBB colors) and
+            one color each for meteors and every object kind above.
   fleet     List of 1-16 ships with right and left artwork: a string or
             1-4 rows, at most 16 single-cell characters wide. Spaces are
             transparent. Each ship can also have its own color. A custom
             fleet replaces the built-in one.
 
-Frequency levels (meteors, showers, moons, planets, comets, ships) average
-about once an hour at level 1 and double with each level: level 5 is about
-every four minutes, level 7 about every minute, and level 10 about every seven
-seconds. Waits vary between half and one and a half times the average. Only
-one moon, planet, comet, or ship is on screen at a time; due kinds wait for
-the slot and the longest-waiting kind goes first.
+Frequency levels (meteors, showers, and every object kind) average about once
+an hour at level 1 and double with each level: level 5 is about every four
+minutes, level 7 about every minute, and level 10 about every seven seconds.
+Waits vary between half and one and a half times the average. Every kind
+keeps its own timer, so several objects can share the view; a kind that finds
+no room tries again at its next due time.
 
 All options are optional. See README.md for color and fleet examples. There
 is no autostart option; setup() starts the sky. Put -- stylua: ignore above
 the fleet field to preserve the artwork's row layout when formatting.
 
 Object kinds are defined in lua/stardust/objects.lua. Each entry names the
-kind, its option and color key, default level, motion, and sprite. Adding an
-entry adds its option, color, preview command, and spawn timer.
+kind, its option and color key, default level, motion, and artwork: a sprite
+or a list of frames, with optional per-cell brightness and phase for a spin
+period, and a bob period for moving kinds. Adding an entry adds its option,
+color, preview command, and spawn timer.
 
 COMMANDS                                                  *:Stardust*
 
@@ -57,19 +67,26 @@ COMMANDS                                                  *:Stardust*
   :Stardust stop         Stop and remove all decorations.
   :Stardust meteor       Preview a shooting star.
   :Stardust shower       Preview a shower.
-  :Stardust battle       Start a fresh chase, replacing the current object.
-  :Stardust moon         Preview a crescent moon.
-  :Stardust planet       Preview a ringed planet.
+  :Stardust battle       Start a fresh chase alongside current objects.
+  :Stardust moon         Preview a moon passing through its phases.
+  :Stardust planet       Preview a planet with a spinning ring.
+  :Stardust orbit        Preview a planet with a circling moon.
+  :Stardust pulsar       Preview a flashing star.
+  :Stardust nebula       Preview a shimmering cloud.
+  :Stardust supernova    Preview an expanding burst.
   :Stardust comet        Preview a comet.
+  :Stardust satellite    Preview a satellite with a blinking beacon.
+  :Stardust ufo          Preview a bobbing saucer.
   :Stardust ship         Preview an ordinary ship flyby.
   :Stardust status       Show activity and counts.
   :checkhealth stardust  Check rendering requirements.
 
 The Lua API exposes setup(opts), start(), stop(), toggle(), meteor(),
 shower(), battle(), object(kind), and status(). Previews respect category
-switches, returning whether the effect could start. Battle previews replace
-the current object; other previews wait for an active effect to finish. Small
-views can prevent previews. object() without a kind picks from objects.
+switches, returning whether the effect could start. Object and battle
+previews add to whatever is on screen; meteor and shower previews wait for the
+current one to finish. Small views can prevent previews. object() without a
+kind picks from objects.
 
 PLACEMENT                                                 *stardust-placement*
 

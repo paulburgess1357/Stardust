@@ -19,9 +19,12 @@ ui.lua([[
   _G.star_ns = vim.api.nvim_get_namespaces()['stardust.stars']
   _G.notices = {}
   vim.notify = function(message) notices[#notices+1]=message end
-  _G.quiet = {meteors=0,showers=0,moons=0,planets=0,comets=0,ships=0}
+  _G.kinds = require('stardust.objects').kinds
+  _G.quiet = {meteors=0,showers=0}
+  for _,kind in ipairs(kinds) do quiet[kind.plural]=0 end
   _G.hold = function(scene)
-    for _,name in ipairs({'meteor','shower','moon','planet','comet','ship'}) do scene.due[name]=math.huge end
+    scene.due.meteor, scene.due.shower = math.huge, math.huge
+    for _,kind in ipairs(kinds) do scene.due[kind.name]=math.huge end
   end
   _G.reset = function(lines, opts)
     sd.stop()
@@ -95,7 +98,7 @@ test(
   local cfg=resolve(input)
   cfg.colors.stars[1]='#000000'; cfg.fleet[1].right[1]='changed'
   assert(input.colors.stars[1] == '#abcdef' and input.fleet[1].right[1] == 'AB')
-  assert(#resolve({moons=0,planets=0,comets=0,ships=0}).objects == 0)
+  assert(#resolve(quiet).objects == 0 and #resolve().objects == #kinds)
   assert(#resolve().fleet == 10 and #resolve(input).fleet == 1,'fleet must replace, not merge')
   local defaults=resolve()
   for _,key in ipairs({'stars','meteors','showers','battles','moons','planets','comets','ships'}) do
@@ -111,7 +114,7 @@ test(
   local resolve=require('stardust.config').resolve
   local cfg=resolve({stars=2,ships=0})
   assert(cfg.stars == 2 and cfg.meteors > 0 and cfg.moons > 0 and cfg.ships == 0)
-  assert(vim.deep_equal(cfg.objects,{'moon','planet','comet'}))
+  assert(#cfg.objects == #kinds-1 and not vim.tbl_contains(cfg.objects,'ship') and vim.tbl_contains(cfg.objects,'moon'))
   for _,kind in ipairs({'moon','planet','comet','ship'}) do
     sd.setup({[kind..'s']=0})
     assert(not sd.object(kind))
@@ -450,11 +453,15 @@ test(
 test(
   'preview commands and category choices stay consistent',
   [[
-  for _,kind in ipairs({'meteor','moon','planet','comet','ship'}) do
-    reset({'one'},{meteors=7,moons=6,planets=6,comets=6,ships=6})
+  local names={'meteor'}
+  local all={meteors=7}
+  for _,kind in ipairs(kinds) do names[#names+1]=kind.name; all[kind.plural]=6 end
+  for _,kind in ipairs(names) do
+    reset({'one'},all)
     vim.cmd('Stardust '..kind); advance(30)
-    assert(sd.status().active and #marks() == 1)
-    assert(kind == 'meteor' and not sd.meteor() or kind ~= 'meteor' and not sd.object(kind))
+    assert(sd.status().active and #marks() == 1,kind)
+    assert(kind == 'meteor' and not sd.meteor() or kind ~= 'meteor' and sd.object(kind),kind)
+    if kind ~= 'meteor' then assert(sd.status().objects == 2,kind..' preview did not add a second object') end
   end
   vim.cmd('Stardust saturn'); assert(#notices == 1 and notices[1]:match('expected one of')); notices={}
   sd.setup(vim.tbl_extend('force',quiet,{stars=0})); rt.step(0)

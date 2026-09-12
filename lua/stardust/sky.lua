@@ -31,7 +31,7 @@ function M.star_target(level, area)
 end
 
 function M.new(seed)
-  return { random = random_source(seed), stars = {}, age = 0, due = {} }
+  return { random = random_source(seed), stars = {}, objects = {}, age = 0, due = {} }
 end
 
 function M.safe(layout, x, y)
@@ -95,6 +95,7 @@ local function flight(sky, layout, diagonal, sprite_height)
         slope = slope,
         travel = 0,
         step = 0,
+        age = 0,
       }
     end
   end
@@ -126,51 +127,86 @@ function M.shower(sky, layout, cfg)
   return true
 end
 
-local function stationary(sky, layout, sprite)
+-- Cells the stationary objects already on screen can touch, so a new one
+-- prefers a spot of its own. Overlaps are still allowed when space is short.
+local function taken(sky)
+  local cells = {}
+  for _, object in ipairs(sky.objects) do
+    if object.life then
+      for _, part in ipairs(objects.footprint(objects.by_name[object.kind])) do
+        cells[(object.y + part[2]) * 65536 + object.x + part[1]] = true
+      end
+    end
+  end
+  return cells
+end
+
+local function stationary(sky, layout, kind)
+  local life = kind.life or { 16, 28 }
+  local used, fallback = taken(sky), nil
   for _ = 1, 48 do
     local x, y = point(sky, layout)
     if not x then
-      return
+      break
     end
-    local clear = true
-    for _, part in ipairs(sprite) do
-      if not M.safe(layout, x + part[1], y + part[2]) then
+    local clear, alone = true, true
+    for _, part in ipairs(objects.footprint(kind)) do
+      local px, py = x + part[1], y + part[2]
+      if not M.safe(layout, px, py) then
         clear = false
         break
       end
+      alone = alone and not used[py * 65536 + px]
     end
-    if clear then
-      return { x = x, y = y, dx = 1, age = 0, life = 16 + sky.random() * 12 }
+    if clear and alone then
+      fallback = { x = x, y = y }
+      break
+    elseif clear and not fallback then
+      fallback = { x = x, y = y }
     end
+  end
+  if fallback then
+    return {
+      x = fallback.x,
+      y = fallback.y,
+      dx = 1,
+      age = 0,
+      life = life[1] + sky.random() * (life[2] - life[1]),
+    }
   end
 end
 
--- An explicit battle preview replaces the current object once a chase fits.
--- Every other appearance waits for the current object to finish. Only
--- automatic ship flights can turn into a chase by chance.
-local function spawn_object(sky, layout, cfg, name, automatic, encounter)
-  if sky.object and not encounter then
-    return false
+-- One row up or down on a slow wave, for kinds that bob.
+local function bob(kind, object)
+  if not kind.bob then
+    return 0
   end
+  return math.floor(math.sin(object.age / kind.bob * math.pi * 2) + 0.5)
+end
+
+-- Objects never wait for one another: each kind follows its own timer and
+-- previews always add one more. Only automatic ship flights can turn into a
+-- chase by chance; an explicit battle preview always tries to start one.
+local function spawn_object(sky, layout, cfg, name, automatic, encounter)
   local kind = objects.by_name[name]
   if not kind or cfg[kind.plural] <= 0 then
     return false
   end
-  local sprite, variant, ship = kind.sprite, nil, nil
+  local sprite, variant, ship = kind.sprite or (kind.frames and kind.frames[1]), nil, nil
   if kind.fleet then
     variant = math.floor(sky.random() * #cfg.art) + 1
     ship = cfg.art[variant]
   end
   local object
   if kind.motion == 'stationary' then
-    object = stationary(sky, layout, sprite)
+    object = stationary(sky, layout, kind)
   else
-    object = flight(
-      sky,
-      layout,
-      kind.motion == 'diagonal',
-      ship and math.max(ship.right.height, ship.left.height)
-    )
+    local height = ship and math.max(ship.right.height, ship.left.height) or objects.height(kind)
+    object = flight(sky, layout, kind.motion == 'diagonal', height)
+    if object and kind.bob then
+      -- Leave a row above and below for the wobble.
+      object.y, object.origin_y = object.y + 1, object.origin_y + 1
+    end
   end
   if not object then
     return false
@@ -189,13 +225,13 @@ local function spawn_object(sky, layout, cfg, name, automatic, encounter)
       return false
     end
   end
-  sky.object = object
+  sky.objects[#sky.objects + 1] = object
   sky.due[name] = next_time(sky, cfg[kind.plural])
   return true
 end
 
 -- Without a kind, pick any enabled kind as an automatic appearance would.
-function M.object(sky, layout, cfg, name, encounter)
+function M.object(sky, layout, cfg, name)
   local automatic = name == nil
   if automatic then
     if #cfg.objects == 0 then
@@ -203,7 +239,7 @@ function M.object(sky, layout, cfg, name, encounter)
     end
     name = cfg.objects[math.floor(sky.random() * #cfg.objects) + 1]
   end
-  return spawn_object(sky, layout, cfg, name, automatic, encounter)
+  return spawn_object(sky, layout, cfg, name, automatic, false)
 end
 
 function M.battle(sky, layout, cfg)
@@ -212,6 +248,43 @@ function M.battle(sky, layout, cfg)
   end
   for _ = 1, 48 do
     if spawn_object(sky, layout, cfg, 'ship', false, true) then
+      return true
+    end
+  end
+  return false
+end
+
+-- Move one object through dt seconds; false once it has left or expired.
+local function advance_object(sky, layout, cfg, object, dt)
+  local kind = objects.by_name[object.kind]
+  if cfg[kind.plural] <= 0 then
+    return false
+  end
+  object.age = object.age + dt
+  if object.battle then
+    if cfg.battles <= 0 then
+      -- Resume an ordinary flight from the pursuer's current position.
+      object.origin_x, object.origin_y = object.x, object.y
+      object.step, object.travel = 0, 0
+      object.battle = nil
+      return true
+    end
+    return battle.step(object, layout, dt)
+  end
+  if object.life then
+    return object.age < object.life
+  end
+  object.travel = object.travel + dt * OBJECT_SPEED * (kind.speed or 1) / object.stride
+  local steps = math.floor(object.travel + 1e-9)
+  object.travel = math.max(0, object.travel - steps)
+  object.step = object.step + steps
+  object.x, object.y = flight_point(object, object.step)
+  object.y = object.y + bob(kind, object)
+  -- Keep moving until every sprite cell (including the diagonal tail) exits.
+  for _, part in ipairs(object.sprite) do
+    local x, y = flight_point(object, object.step + part[1])
+    y = y + part[2]
+    if x >= 0 and x < layout.width and y >= 1 and y <= layout.height then
       return true
     end
   end
@@ -236,9 +309,6 @@ function M.step(sky, layout, cfg, dt, color_count)
   end
   if cfg.showers <= 0 then
     sky.shower = nil
-  end
-  if sky.object and objects.level(cfg, sky.object.kind) <= 0 then
-    sky.object = nil
   end
   local keep = 0
   for _, star in ipairs(sky.stars) do
@@ -293,53 +363,23 @@ function M.step(sky, layout, cfg, dt, color_count)
   if sky.shower and not meteors.step_shower(sky.shower, layout, shower_dt) then
     sky.shower = nil
   end
-  -- Due kinds wait for the single slot rather than losing their turn, and
-  -- the longest-waiting kind goes first so a busy kind cannot starve others.
-  local waiting
+  -- Every kind keeps its own timer, so several objects can share the view.
+  -- A kind that finds no room simply tries again at its next due time.
   for _, kind in ipairs(objects.kinds) do
-    if
-      due(sky, kind.name, cfg[kind.plural])
-      and (not waiting or sky.due[kind.name] < sky.due[waiting])
-    then
-      waiting = kind.name
+    if due(sky, kind.name, cfg[kind.plural]) then
+      spawn_object(sky, layout, cfg, kind.name, true, false)
+      sky.due[kind.name] = next_time(sky, cfg[kind.plural])
     end
   end
-  if waiting and not sky.object then
-    spawn_object(sky, layout, cfg, waiting, true, false)
-    sky.due[waiting] = next_time(sky, objects.level(cfg, waiting))
+  local kept = 0
+  for _, object in ipairs(sky.objects) do
+    if advance_object(sky, layout, cfg, object, dt) then
+      kept = kept + 1
+      sky.objects[kept] = object
+    end
   end
-  local object = sky.object
-  if object and object.battle then
-    if cfg.battles <= 0 then
-      -- Resume an ordinary flight from the pursuer's current position.
-      object.origin_x, object.origin_y = object.x, object.y
-      object.step, object.travel = 0, 0
-      object.battle = nil
-    elseif not battle.step(object, layout, dt) then
-      sky.object = nil
-    end
-  elseif object and object.life then
-    object.age = object.age + dt
-    if object.age >= object.life then
-      sky.object = nil
-    end
-  elseif object then
-    local kind = objects.by_name[object.kind]
-    object.travel = object.travel + dt * OBJECT_SPEED * (kind.speed or 1) / object.stride
-    local steps = math.floor(object.travel + 1e-9)
-    object.travel = math.max(0, object.travel - steps)
-    object.step = object.step + steps
-    object.x, object.y = flight_point(object, object.step)
-    -- Keep moving until every sprite cell (including the diagonal tail) exits.
-    local visible = false
-    for _, part in ipairs(object.sprite) do
-      local x, y = flight_point(object, object.step + part[1])
-      y = y + part[2]
-      visible = visible or (x >= 0 and x < layout.width and y >= 1 and y <= layout.height)
-    end
-    if not visible then
-      sky.object = nil
-    end
+  for i = #sky.objects, kept + 1, -1 do
+    sky.objects[i] = nil
   end
 end
 
@@ -362,12 +402,12 @@ function M.frame(sky, layout, cfg, palette)
   if sky.shower and cfg.showers > 0 then
     meteors.draw_shower(sky.shower, palette.meteor, add)
   end
-  local object = sky.object
-  if object and objects.level(cfg, object.kind) > 0 then
+  for _, object in ipairs(sky.objects) do
     local kind = objects.by_name[object.kind]
     local diagonal = kind.motion == 'diagonal'
+    local ease = kind.fade or 2
     local fade = object.life
-        and math.max(0, math.min(1, object.age / 2, (object.life - object.age) / 2))
+        and math.max(0, math.min(1, object.age / ease, (object.life - object.age) / ease))
       or 1
     if object.battle and cfg.battles > 0 then
       battle.draw(object, palette, add)
@@ -377,13 +417,20 @@ function M.frame(sky, layout, cfg, palette)
       add(x, y, '✧', palette[object.kind][math.ceil(object.travel * 7)])
     end
     local colors = kind.fleet and palette.fleet[object.variant] or palette[object.kind]
-    for index, part in ipairs(object.sprite) do
+    local sprite = objects.sprite(kind, object)
+    for index, part in ipairs(sprite) do
       local x, y = object.x + part[1] * object.dx, object.y + part[2]
-      local level = (kind.fleet and 7 or math.max(2, 8 - index)) * fade
+      local level = part.level or (kind.fleet and 7 or math.max(2, 8 - index))
+      if kind.spin and part.phase then
+        -- Brightness travels from cell to cell in phase order.
+        local wave = 0.5 + 0.5 * math.cos((object.age / kind.spin - part.phase) * math.pi * 2)
+        level = level * (0.3 + 0.7 * wave)
+      end
+      level = level * fade
       if diagonal then
         x, y = flight_point(object, object.step + part[1])
         y = y + part[2]
-        level = index == #object.sprite and level * (1 - object.travel) or level - object.travel
+        level = index == #sprite and level * (1 - object.travel) or level - object.travel
       end
       if fade > 0.05 and level > 0.2 then
         add(x, y, part[3], colors[math.max(1, math.ceil(level))])

@@ -1,7 +1,7 @@
 local context = [[
   local sky=require('stardust.sky')
-  local opts={stars=0,meteors=0,showers=0,moons=0,planets=0,comets=0,ships=6,
-    fleet={{right={' A ','BCD',' E '},left={' a ','bcd',' e '}}}}
+  local opts=vim.tbl_extend('force',quiet,{stars=0,ships=6,
+    fleet={{right={' A ','BCD',' E '},left={' a ','bcd',' e '}}}})
   local cfg=require('stardust.config').resolve(opts)
   local palette=require('stardust.palette').setup(cfg)
   local view=require('stardust.layout').empty(160,40)
@@ -9,7 +9,8 @@ local context = [[
     local scene=sky.new(seed)
     assert(sky.battle(scene,view,cfg))
     hold(scene)
-    return scene,scene.object,scene.object.battle
+    local ship=scene.objects[#scene.objects]
+    return scene,ship,ship.battle
   end
   local function find(predicate)
     for seed=1,300 do
@@ -42,12 +43,12 @@ return {
     local arrivals,speeds,lasers={},{},{}
     for seed=1,100 do
       local scene=sky.new(seed*7919)
-      assert(sky.object(scene,view,cfg,'ship') and not scene.object.battle)
-      scene.object=nil
+      assert(sky.object(scene,view,cfg,'ship') and not scene.objects[1].battle)
+      scene.objects={}
       assert(sky.object(scene,view,cfg))
-      if scene.object.battle then chases=chases+1 else solo=solo+1 end
+      if scene.objects[1].battle then chases=chases+1 else solo=solo+1 end
       assert(sky.battle(scene,view,cfg))
-      local battle=scene.object.battle
+      local battle=scene.objects[2].battle
       arrivals[#arrivals+1]=battle.arrival
       speeds[#speeds+1]=battle.speed
       lasers[#lasers+1]=battle.laser_speed
@@ -59,13 +60,13 @@ return {
     cfg.battles=0
     local scene=sky.new(7919)
     assert(not sky.battle(scene,view,cfg))
-    assert(sky.object(scene,view,cfg) and not scene.object.battle)
+    assert(sky.object(scene,view,cfg) and not scene.objects[1].battle)
     cfg.battles=10
     local every=0
     for seed=1,40 do
       scene=sky.new(seed*7919)
       assert(sky.object(scene,view,cfg))
-      if scene.object.battle then every=every+1 end
+      if scene.objects[1].battle then every=every+1 end
     end
     assert(every == 40,'level 10 should turn every automatic flight into a chase')
     cfg.battles=3
@@ -112,7 +113,7 @@ return {
         assert(not expected or vim.deep_equal(cells,expected),'impact changes with FPS')
         expected=cells
         advance(scene,1.1,fps); assert(#enemy_cells(scene) == 0)
-        sky.step(scene,view,cfg,1000,2); assert(not scene.object)
+        sky.step(scene,view,cfg,1000,2); assert(#scene.objects == 0)
       end
     end
   ]],
@@ -144,7 +145,7 @@ return {
       assert(gap() >= before - (boost and 0 or 1),'bullet caught an escaping enemy')
       assert(not battle.hit and #enemy_cells(scene) == 5)
       sky.step(scene,view,cfg,1000,2)
-      assert(not battle.hit and not scene.object,'escape did not clean up')
+      assert(not battle.hit and #scene.objects == 0,'escape did not clean up')
     end
     -- A collision beyond the far edge must not destroy an already departed ship.
     local _,scene,ship,battle=find(function(_,candidate)
@@ -152,7 +153,7 @@ return {
       return contact and contact*candidate.enemy_speed > view.width+20
     end)
     sky.step(scene,view,cfg,1000,2)
-    assert(not battle.hit and not scene.object)
+    assert(not battle.hit and #scene.objects == 0)
   ]],
   },
   {
@@ -203,7 +204,7 @@ return {
     reset({'x'},opts); rt.step(0); sky.new=create_sky
     assert(sd.battle())
     hold(scene)
-    local battle=scene.object.battle
+    local battle=scene.objects[1].battle
     local contact=battle.shots[1].contact
     assert(contact,'test chase has no collision')
     rt.step(contact-1/30); vim.cmd('redraw!'); assert(not battle.hit)

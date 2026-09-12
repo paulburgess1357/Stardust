@@ -399,9 +399,11 @@ function M.status()
     local scene = ctx.scene or ctx.sky
     if ctx.visible and not counted[scene] then
       result.stars = result.stars + #scene.stars
-      result.objects = result.objects + (scene.object and 1 or 0)
+      result.objects = result.objects + #scene.objects
       result.showers = result.showers + (scene.shower and 1 or 0)
-      result.battles = result.battles + (scene.object and scene.object.battle and 1 or 0)
+      for _, object in ipairs(scene.objects) do
+        result.battles = result.battles + (object.battle and 1 or 0)
+      end
       counted[scene] = true
     end
   end
