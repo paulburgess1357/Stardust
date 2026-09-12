@@ -2,6 +2,10 @@
 -- Copy this into your config and adjust the levels to taste.
 -- Every value shown here is the default, so you can delete any line you
 -- do not care about and nothing changes.
+--
+-- Install Stardust first with your plugin manager (see the README).
+-- For a local checkout instead, uncomment the next line:
+-- vim.opt.runtimepath:prepend(vim.fn.expand('~/Repos/Stardust'))
 
 vim.opt.termguicolors = true -- 24-bit color, needed for smooth fades
 
