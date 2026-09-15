@@ -159,6 +159,9 @@ Lua on `require('stardust')`: `start()`, `stop()`, `toggle()`, `meteor()`,
 - The sky keeps running in every mode and buffer type, including terminals and
   startup dashboards.
 - Files, undo history, and terminal scrollback are never modified.
+- Each frame redraws only the lines whose cells changed. Text, statuslines,
+  and other plugins' decorations are not repainted by the sky, and a frame
+  with nothing new does not touch the terminal at all.
 
 ## Development
 

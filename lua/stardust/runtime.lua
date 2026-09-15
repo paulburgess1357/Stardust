@@ -6,15 +6,46 @@ local M = {}
 
 local stars_ns = api.nvim_create_namespace('stardust.stars')
 local canvas_ns = api.nvim_create_namespace('stardust.canvas')
-local state = { active = false, contexts = {}, canvases = {}, attached = {}, request = 0 }
+local state =
+  { active = false, contexts = {}, canvases = {}, attached = {}, spans = {}, request = 0, tick = 0 }
+local widths = {}
+-- Row positions are rescanned at least this often even when nothing seems to
+-- have changed, for the few things the fingerprint cannot see.
+local RESCAN_NS = 1e9
 
 local function now()
   return uv.hrtime() / 1e9
 end
 
-local function redraw()
-  -- Public redraw command, scheduled outside decoration callbacks.
-  vim.cmd('redraw!')
+-- Only single-cell glyphs can be overlaid one per cell. Widths never change
+-- for a glyph unless 'ambiwidth' does, which empties this cache.
+local function narrow(glyph)
+  local width = widths[glyph]
+  if width == nil then
+    width = vim.fn.strdisplaywidth(glyph) == 1
+    widths[glyph] = width
+  end
+  return width
+end
+
+-- Redraws stay as small as possible: line ranges are marked without drawing,
+-- then one flush per tick draws them all and writes the terminal once.
+-- Nothing clears the screen or touches lines, statuslines, and other
+-- plugins' decorations that did not change.
+local redraw_api = api.nvim__redraw
+
+local function redraw_lines(win, first, last)
+  if redraw_api then
+    redraw_api({ win = win, range = { first, last + 1 }, flush = false })
+  end
+end
+
+local function flush()
+  if redraw_api then
+    redraw_api({ flush = true })
+  else
+    vim.cmd('redraw!')
+  end
 end
 
 local function clear_canvas(buf, forget)
@@ -66,7 +97,7 @@ end
 local function context(win, buf)
   local ctx = state.contexts[win]
   if not ctx or ctx.buf ~= buf then
-    ctx = { buf = buf, cache = {}, sky = sky.new(uv.hrtime() % 2147483646 + win) }
+    ctx = { buf = buf, shown = {}, sky = sky.new(uv.hrtime() % 2147483646 + win) }
     state.contexts[win] = ctx
   end
   return ctx
@@ -84,17 +115,98 @@ local function fail(err)
   end)
 end
 
-local function render_window(_, win, buf)
+-- One frame of a window, grouped by buffer line. Each line carries a
+-- signature of its cells so a later frame can tell exactly which lines
+-- changed. The frame belongs to the tick it was built on: skies only move in
+-- step() and spawn(), and both advance the tick.
+local function build_frame(ctx, view)
+  local lines = {}
+  for _, cell in ipairs(sky.frame(ctx.scene or ctx.sky, view, state.cfg, state.palette)) do
+    if narrow(cell.glyph) then
+      local row = view.rows[cell.y]
+      if row and row.line then
+        local entry = lines[row.line]
+        if not entry then
+          entry = { col = row.col, cells = {}, sig = '' }
+          lines[row.line] = entry
+        end
+        entry.cells[#entry.cells + 1] = cell
+        entry.sig = entry.sig .. cell.x .. cell.glyph .. cell.hl .. ';'
+      end
+    end
+  end
+  ctx.frame =
+    { view = view, tick = state.tick, lines = lines, stamp = view.stamp, free = view.free }
+  return lines
+end
+
+-- Lines whose cells differ from what the window last drew. `shown` is
+-- updated in advance; on_line corrects it for every line Neovim actually
+-- draws, so a line inside a closed fold or a redraw deferred to a later
+-- flush never leaves the two out of step.
+local function changed_lines(ctx, lines)
+  local view, shown = ctx.layout, ctx.shown
+  local first, last
+  local function mark(line)
+    if not first or line < first then
+      first = line
+    end
+    if not last or line > last then
+      last = line
+    end
+  end
+  for line, entry in pairs(lines) do
+    if shown[line] ~= entry.sig then
+      mark(line)
+      shown[line] = entry.sig
+    end
+  end
+  local top, bottom = view.top - 1, view.bottom - 1
+  for line in pairs(shown) do
+    if line < top or line > bottom then
+      -- Scrolled out of view: whatever it showed left the screen with it.
+      shown[line] = nil
+    elseif not lines[line] then
+      mark(line)
+      shown[line] = nil
+    end
+  end
+  return first, last
+end
+
+local function render_window(_, win, buf, topline)
   if not state.active then
     return false
   end
+  local ctx = state.contexts[win]
+  if not ctx or ctx.buf ~= buf then
+    return false
+  end
   local ok, err = pcall(function()
-    local ctx = state.contexts[win]
-    if not ctx or ctx.buf ~= buf then
+    local frame = ctx.frame
+    local view = frame and frame.view
+    if
+      frame
+      and frame.tick == state.tick
+      and view.top == topline + 1
+      and view.tick == api.nvim_buf_get_changedtick(buf)
+      and view.win_width == api.nvim_win_get_width(win)
+      and view.win_height == api.nvim_win_get_height(win)
+    then
+      -- Same text and geometry as the tick. Virtual text from other plugins
+      -- can still appear between ticks, so its occupancy is re-checked.
+      if layout.occupy(view, buf, canvas_ns) == frame.stamp then
+        return
+      end
+      if state.canvases[buf] and view.free ~= frame.free then
+        clear_canvas(buf)
+      end
+      build_frame(ctx, view)
       return
     end
-    -- Re-evaluate occupancy during every redraw, including edits between ticks.
-    local view = layout.get(win, buf, ctx.cache, canvas_ns, state.cfg.floating_windows)
+    -- Re-evaluate everything for a redraw between ticks: an edit, scroll, or
+    -- resize since the frame was built.
+    view = layout.get(win, buf, canvas_ns, state.cfg.floating_windows)
     local canvas = state.canvases[buf]
     local previous = canvas and canvas.views[win]
     if
@@ -111,26 +223,55 @@ local function render_window(_, win, buf)
       -- EOF block during this redraw too, before that deferred event/timer.
       clear_canvas(buf)
     end
-    if not view then
-      return
-    end
-    for _, cell in ipairs(sky.frame(ctx.scene or ctx.sky, view, state.cfg, state.palette)) do
-      if vim.fn.strdisplaywidth(cell.glyph) == 1 then
-        api.nvim_buf_set_extmark(buf, stars_ns, view.rows[cell.y].line, view.rows[cell.y].col, {
-          ephemeral = true,
-          virt_text = { { cell.glyph, cell.hl } },
-          virt_text_win_col = cell.x,
-          virt_text_pos = 'overlay',
-          hl_mode = 'combine',
-          priority = 1,
-        })
-      end
+    if view then
+      ctx.layout = view
+      build_frame(ctx, view)
+    else
+      ctx.frame = nil
     end
   end)
   if not ok then
     fail(err)
+    return false
   end
-  return false
+  return ctx.frame ~= nil
+end
+
+local function render_line(_, win, buf, row)
+  local ctx = state.contexts[win]
+  local frame = ctx and ctx.frame
+  if not frame then
+    return
+  end
+  local requested = state.spans[buf]
+  if not requested or row < requested[1] or row > requested[2] then
+    -- Something other than this plugin redrew the line: a cursorline move, a
+    -- fold, a setting. The next tick rescans the window instead of trusting
+    -- the cached row positions.
+    ctx.rescan = true
+  end
+  local entry = frame.lines[row]
+  if not entry then
+    ctx.shown[row] = nil
+    return
+  end
+  local ok, err = pcall(function()
+    for _, cell in ipairs(entry.cells) do
+      api.nvim_buf_set_extmark(buf, stars_ns, row, entry.col, {
+        ephemeral = true,
+        virt_text = { { cell.glyph, cell.hl } },
+        virt_text_win_col = cell.x,
+        virt_text_pos = 'overlay',
+        hl_mode = 'combine',
+        priority = 1,
+      })
+    end
+  end)
+  if ok then
+    ctx.shown[row] = entry.sig
+  else
+    fail(err)
+  end
 end
 
 local function paint_canvas(buf, canvas, view, offset)
@@ -139,25 +280,32 @@ local function paint_canvas(buf, canvas, view, offset)
     rows[i] = {}
   end
   for _, cell in ipairs(sky.frame(canvas.sky, view, state.cfg, state.palette)) do
-    if cell.y > offset and vim.fn.strdisplaywidth(cell.glyph) == 1 then
+    if cell.y > offset and narrow(cell.glyph) then
       local row = rows[cell.y - offset]
       row[#row + 1] = cell
     end
   end
-  local lines = {}
+  local lines, sigs = {}, {}
   for i, cells in ipairs(rows) do
     table.sort(cells, function(a, b)
       return a.x < b.x
     end)
-    local chunks, column = {}, 0
+    local chunks, column, sig = {}, 0, ''
     for _, cell in ipairs(cells) do
       if cell.x > column then
         chunks[#chunks + 1] = { string.rep(' ', cell.x - column) }
       end
       chunks[#chunks + 1] = { cell.glyph, cell.hl }
       column = cell.x + 1
+      sig = sig .. cell.x .. cell.glyph .. cell.hl .. ';'
     end
     lines[i] = #chunks > 0 and chunks or { { '' } }
+    sigs[i] = sig
+  end
+  canvas.layout = view
+  local sig = table.concat(sigs, '\n')
+  if canvas.id and canvas.sig == sig then
+    return false
   end
   canvas.id = api.nvim_buf_set_extmark(buf, canvas_ns, api.nvim_buf_line_count(buf) - 1, 0, {
     id = canvas.id,
@@ -165,13 +313,15 @@ local function paint_canvas(buf, canvas, view, offset)
     priority = 1,
     right_gravity = true,
   })
-  canvas.layout = view
+  canvas.sig = sig
+  return true
 end
 
 function M.step(dt)
   if not state.active then
     return
   end
+  state.tick = state.tick + 1
   if not any_enabled() then
     clear_canvases()
     return
@@ -191,8 +341,19 @@ function M.step(dt)
     groups[buf] = group
     local ctx = context(win, buf)
     ctx.visible = visible[win] or false
-    local view, reason = layout.get(win, buf, ctx.cache, canvas_ns, state.cfg.floating_windows)
-    ctx.reason, ctx.layout = reason, view
+    local view, reason = ctx.layout, nil
+    if
+      view
+      and not ctx.rescan
+      and uv.hrtime() - view.scanned < RESCAN_NS
+      and layout.fresh(win, buf, view)
+    then
+      -- Same text and geometry: keep the row positions, re-check virtual text.
+      layout.occupy(view, buf, canvas_ns)
+    else
+      view, reason = layout.get(win, buf, canvas_ns, state.cfg.floating_windows)
+    end
+    ctx.reason, ctx.layout, ctx.rescan = reason, view, nil
     seen[win] = true
     if view then
       attach(buf)
@@ -220,6 +381,7 @@ function M.step(dt)
       clear_canvas(buf, true)
     end
   end
+  local changed = false
   for buf, group in pairs(groups) do
     if group.visible and group.height > 0 then
       local canvas = state.canvases[buf]
@@ -237,7 +399,9 @@ function M.step(dt)
         ctx.scene = canvas.sky
       end
       sky.step(canvas.sky, view, state.cfg, dt, #state.palette.stars)
-      paint_canvas(buf, canvas, view, group.views[1].height)
+      if paint_canvas(buf, canvas, view, group.views[1].height) then
+        changed = true
+      end
     else
       for _, ctx in ipairs(group.contexts) do
         if ctx.scene then
@@ -251,6 +415,35 @@ function M.step(dt)
       end
     end
   end
+  -- Draw the tick: every visible view gets a fresh frame, and only lines
+  -- whose cells changed since the last draw are redrawn. Neovim redraws a
+  -- range in every window showing the buffer, so every frame is ready
+  -- before the flush.
+  local pending = {}
+  for win, ctx in pairs(state.contexts) do
+    if ctx.visible and ctx.layout then
+      local first, last = changed_lines(ctx, build_frame(ctx, ctx.layout))
+      if first then
+        pending[#pending + 1] = { win, first, last }
+        local span = state.spans[ctx.buf]
+        if span then
+          span[1], span[2] = math.min(span[1], first), math.max(span[2], last)
+        else
+          state.spans[ctx.buf] = { first, last }
+        end
+      end
+    else
+      ctx.frame, ctx.shown = nil, {}
+    end
+  end
+  for _, request in ipairs(pending) do
+    redraw_lines(request[1], request[2], request[3])
+  end
+  if changed or #pending > 0 then
+    flush()
+  end
+  -- Anything drawn from here on was not requested by this tick.
+  state.spans = {}
 end
 
 local queue_frame
@@ -270,7 +463,6 @@ queue_frame = function(delay)
         fail(err)
         return
       end
-      redraw()
       -- One pending frame, including after scrolls and restarts. Rendering
       -- time counts toward the budget; a busy editor never builds a backlog.
       if state.active and request == state.request then
@@ -287,7 +479,7 @@ function M.start(cfg)
   state.cfg, state.palette = cfg, palette.setup(cfg)
   state.active, state.contexts = true, {}
   state.request = state.request + 1
-  api.nvim_set_decoration_provider(stars_ns, { on_win = render_window })
+  api.nvim_set_decoration_provider(stars_ns, { on_win = render_window, on_line = render_line })
   local group = api.nvim_create_augroup('StardustRuntime', { clear = true })
   local function refresh_palette()
     state.palette = palette.setup(state.cfg)
@@ -300,6 +492,13 @@ function M.start(cfg)
     'OptionSet',
     { group = group, pattern = 'background', callback = refresh_palette }
   )
+  api.nvim_create_autocmd('OptionSet', {
+    group = group,
+    pattern = 'ambiwidth',
+    callback = function()
+      widths = {}
+    end,
+  })
   api.nvim_create_autocmd(
     { 'WinScrolled', 'WinResized', 'WinNew', 'WinClosed', 'BufWinEnter', 'BufWinLeave', 'TabEnter' },
     {
@@ -322,6 +521,7 @@ end
 function M.stop()
   state.active = false
   state.request = state.request + 1
+  state.tick = state.tick + 1
   if state.timer then
     state.timer:stop()
     state.timer:close()
@@ -332,7 +532,8 @@ function M.stop()
   state.canvases = {}
   state.contexts = {}
   pcall(api.nvim_del_augroup_by_name, 'StardustRuntime')
-  redraw()
+  -- Stars are ephemeral decorations: one full redraw is what removes them.
+  vim.cmd('redraw!')
 end
 
 local function spawn(kind)
@@ -360,6 +561,8 @@ local function spawn(kind)
     spawned = ctx and attempt(ctx.sky, ctx.layout) or false
   end
   if spawned then
+    -- The sky changed after this tick's frames were built.
+    state.tick = state.tick + 1
     queue_frame(0)
   end
   return spawned
