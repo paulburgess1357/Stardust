@@ -321,6 +321,14 @@ function M.step(dt)
   if not state.active then
     return
   end
+  -- Incremental search and substitute previews are drawn with a temporary
+  -- pattern that a redraw from anywhere else throws away until the next
+  -- keystroke restores it. Ticking at full speed would make every match
+  -- flicker, so the sky holds still while a command line is being typed.
+  -- Redraws Neovim starts itself still show the current frame.
+  if api.nvim_get_mode().mode:sub(1, 1) == 'c' then
+    return
+  end
   state.tick = state.tick + 1
   if not any_enabled() then
     clear_canvases()

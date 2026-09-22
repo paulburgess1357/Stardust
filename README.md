@@ -157,7 +157,8 @@ Lua on `require('stardust')`: `start()`, `stop()`, `toggle()`, `meteor()`,
 - Floating windows such as pickers and hover docs are left alone unless
   `floating_windows = true`.
 - The sky keeps running in every mode and buffer type, including terminals and
-  startup dashboards.
+  startup dashboards. It only holds still while a command line is being typed,
+  so `/` and `:s` previews do not flicker.
 - Files, undo history, and terminal scrollback are never modified.
 - Each frame redraws only the lines whose cells changed. Text, statuslines,
   and other plugins' decorations are not repainted by the sky, and a frame

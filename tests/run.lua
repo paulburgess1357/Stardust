@@ -331,7 +331,7 @@ test(
 ]]
 )
 
-for _, mode in ipairs({ { ':echo "pending"', 'c' }, { 'v', 'v' }, { 'R', 'R' } }) do
+for _, mode in ipairs({ { 'v', 'v' }, { 'R', 'R' } }) do
   ui.lua([[reset({'one','two','three'}); advance()]])
   ui.request('nvim_input', mode[1])
   test(
@@ -341,12 +341,43 @@ for _, mode in ipairs({ { ':echo "pending"', 'c' }, { 'v', 'v' }, { 'R', 'R' } }
     assert(#before == 1)
     assert(vim.wait(750,function() return not vim.deep_equal(before,marks()) end,10),'animation paused')
     assert(sd.status().active and #marks() == 1)
-    if vim.api.nvim_get_mode().mode == 'c' then assert(vim.fn.getcmdline() == 'echo "pending"') end
     assert(#notices == 0,vim.inspect(notices))
   ]]
   )
   ui.request('nvim_input', '<Esc>')
 end
+
+-- Incremental search and substitute previews are lost by any redraw the
+-- command line did not ask for, so the sky must not tick while one is typed.
+ui.lua([[reset({'hello world','hello there','hello again'},{stars=10}); advance()]])
+ui.request('nvim_input', '/hel')
+test(
+  'the sky holds still while a command line is typed',
+  [[
+  assert(vim.api.nvim_get_mode().mode:sub(1,1) == 'c',vim.api.nvim_get_mode().mode)
+  local before,screen_before=marks(),screen()
+  assert(#before == 1)
+  for _=1,600 do rt.step(1/60) end
+  assert(not vim.wait(750,function() return not vim.deep_equal(before,marks()) end,10),'sky moved while typing')
+  vim.cmd('redraw!')
+  local after=screen()
+  for row=1,vim.o.lines-2 do
+    assert(table.concat(after[row]) == table.concat(screen_before[row]),'sky moved while typing: row '..row)
+  end
+  assert(vim.fn.getcmdline() == 'hel' and sd.status().active)
+  assert(#notices == 0,vim.inspect(notices))
+]]
+)
+ui.request('nvim_input', '<Esc>')
+test(
+  'the sky resumes when the command line closes',
+  [[
+  assert(vim.api.nvim_get_mode().mode == 'n',vim.api.nvim_get_mode().mode)
+  local before=marks()
+  assert(vim.wait(750,function() return not vim.deep_equal(before,marks()) end,10),'sky did not resume')
+  assert(#notices == 0,vim.inspect(notices))
+]]
+)
 
 test(
   'focus loss keeps the sky visible and animated',
